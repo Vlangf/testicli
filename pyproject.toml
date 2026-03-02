@@ -1,0 +1,31 @@
+[project]
+name = "testicli"
+version = "0.1.0"
+description = "AI test agent powered by Claude — scans your project, learns conventions from existing tests, generates integration/e2e/fuzzing/security tests, runs them, and auto-fixes failures. Supports Python, JavaScript, and Go."
+requires-python = ">=3.14"
+dependencies = [
+    "anthropic>=0.52.0",
+    "typer>=0.15.0",
+    "rich>=13.9.0",
+    "pydantic>=2.10.0",
+    "pyyaml>=6.0.2",
+    "pathspec>=0.12.0",
+]
+
+[project.scripts]
+testicli = "testicli.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/testicli"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
