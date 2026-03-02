@@ -73,7 +73,7 @@ def init(
     console.print("[green]Saved config.yaml[/green]")
 
     # Analyze existing tests
-    rules = analyze_existing_tests(llm, result.config, result.test_files)
+    rules = analyze_existing_tests(llm, result.config, result.test_files_by_language)
     store.save_rules(rules)
     console.print("[green]Saved rules.yaml[/green]")
 
@@ -363,8 +363,8 @@ def status(
         raise typer.Exit(1)
 
     console.print(f"[bold]Project:[/bold] {project_root}")
-    console.print(f"  Language: {config.language.value}")
-    console.print(f"  Framework: {config.framework.value}")
+    for lc in config.languages:
+        console.print(f"  Language: {lc.language.value}, Framework: {lc.framework.value}")
 
     rules = store.load_rules()
     console.print(f"  Rules: {len(rules)}")

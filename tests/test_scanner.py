@@ -3,11 +3,14 @@
 from pathlib import Path
 
 from testicli.languages.base import register_language
+from testicli.languages.javascript import JavaScriptSupport
 from testicli.languages.python import PythonSupport
 from testicli.core.scanner import scan_project, _find_subprojects, _guess_source_dirs, _guess_test_dirs
+from testicli.models import Language
 
-# Ensure Python is registered
+# Ensure languages are registered
 register_language(PythonSupport())
+register_language(JavaScriptSupport())
 
 
 def _setup_python_project(tmp_path: Path) -> None:
@@ -121,3 +124,83 @@ def test_monorepo_source_and_test_dirs(tmp_path: Path):
 
     test_names = [f.name for f in result.test_files]
     assert "test_main.py" in test_names
+
+
+def test_multi_language_monorepo(tmp_path: Path):
+    """Monorepo with Python and JavaScript detects both languages."""
+    # Root marker
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'monorepo'\n")
+
+    # Python subproject
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    (backend / "pyproject.toml").write_text("")
+    (backend / "app").mkdir()
+    (backend / "app" / "main.py").write_text("x = 1\n")
+    (backend / "tests").mkdir()
+    (backend / "tests" / "test_main.py").write_text("def test_x(): pass\n")
+
+    # JavaScript subproject
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "package.json").write_text('{"name": "frontend"}')
+    (frontend / "src").mkdir()
+    (frontend / "src" / "index.js").write_text("export default 1;\n")
+
+    result = scan_project(tmp_path)
+
+    detected_languages = {lc.language for lc in result.config.languages}
+    assert Language.PYTHON in detected_languages
+    assert Language.JAVASCRIPT in detected_languages
+    assert len(result.config.languages) == 2
+
+    # Backward compat properties still work
+    assert result.config.language == Language.PYTHON
+    assert result.language_support is not None
+
+
+def test_test_files_by_language(tmp_path: Path):
+    """test_files_by_language maps language to its test files."""
+    _setup_python_project(tmp_path)
+    result = scan_project(tmp_path)
+
+    assert "python" in result.test_files_by_language
+    py_tests = result.test_files_by_language["python"]
+    assert len(py_tests) >= 1
+    assert any(f.name == "test_app.py" for f in py_tests)
+
+
+def test_test_files_by_language_monorepo(tmp_path: Path):
+    """Monorepo test_files_by_language separates files by language."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'monorepo'\n")
+
+    # Python subproject with tests
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    (backend / "pyproject.toml").write_text("")
+    (backend / "tests").mkdir()
+    (backend / "tests" / "test_main.py").write_text("def test_x(): pass\n")
+
+    # JavaScript subproject with tests
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "package.json").write_text('{"name": "frontend"}')
+    (frontend / "src").mkdir()
+    (frontend / "src" / "index.js").write_text("export default 1;\n")
+    (frontend / "tests").mkdir()
+    (frontend / "tests" / "index.test.js").write_text("test('x', () => {})\n")
+
+    result = scan_project(tmp_path)
+
+    assert "python" in result.test_files_by_language
+    assert "javascript" in result.test_files_by_language
+
+    py_names = [f.name for f in result.test_files_by_language["python"]]
+    js_names = [f.name for f in result.test_files_by_language["javascript"]]
+
+    assert "test_main.py" in py_names
+    assert "index.test.js" in js_names
+
+    # No cross-contamination
+    assert "index.test.js" not in py_names
+    assert "test_main.py" not in js_names

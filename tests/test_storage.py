@@ -5,6 +5,7 @@ from pathlib import Path
 from testicli.config import ensure_agent_dir
 from testicli.models import (
     Language,
+    LanguageConfig,
     PlannedTest,
     ProjectConfig,
     TestFailure,
@@ -22,8 +23,7 @@ def test_save_and_load_config(tmp_path: Path):
     store = Store(tmp_path)
 
     config = ProjectConfig(
-        language=Language.PYTHON,
-        framework=TestFramework.PYTEST,
+        languages=[LanguageConfig(language=Language.PYTHON, framework=TestFramework.PYTEST)],
         test_dirs=["tests"],
         source_dirs=["src"],
     )
@@ -54,6 +54,24 @@ def test_save_and_load_rules(tmp_path: Path):
     assert len(loaded) == 2
     assert loaded[0].category == "naming"
     assert loaded[1].pattern == "one file per module"
+
+
+def test_save_and_load_rules_with_language(tmp_path: Path):
+    ensure_agent_dir(tmp_path)
+    store = Store(tmp_path)
+
+    rules = [
+        TestRule(language="python", category="naming", pattern="test_ prefix", confidence=0.9),
+        TestRule(language="javascript", category="naming", pattern=".test.js suffix", confidence=0.9),
+        TestRule(category="general", pattern="universal rule"),
+    ]
+    store.save_rules(rules)
+
+    loaded = store.load_rules()
+    assert len(loaded) == 3
+    assert loaded[0].language == "python"
+    assert loaded[1].language == "javascript"
+    assert loaded[2].language is None
 
 
 def test_load_rules_empty(tmp_path: Path):

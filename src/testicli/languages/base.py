@@ -58,5 +58,19 @@ def detect_language(project_root: Path) -> LanguageSupport | None:
     return None
 
 
+def detect_all_languages(project_root: Path, extra_dirs: list[Path] | None = None) -> list[LanguageSupport]:
+    """Return all language supports detected in the project.
+
+    Checks the project root and optionally extra directories (e.g. subprojects).
+    """
+    found: dict[Language, LanguageSupport] = {}
+    dirs_to_check = [project_root] + (extra_dirs or [])
+    for d in dirs_to_check:
+        for lang in _registry.values():
+            if lang.language not in found and lang.detect(d):
+                found[lang.language] = lang
+    return list(found.values())
+
+
 def all_languages() -> list[LanguageSupport]:
     return list(_registry.values())

@@ -6,8 +6,8 @@ from pathlib import Path
 
 from rich.console import Console
 
-from testicli.languages.base import detect_language, LanguageSupport
-from testicli.models import ProjectConfig
+from testicli.languages.base import detect_all_languages, LanguageSupport
+from testicli.models import LanguageConfig, ProjectConfig
 
 console = Console()
 
@@ -23,9 +23,15 @@ _SUBPROJECT_MARKERS = {"pyproject.toml", "package.json", "go.mod"}
 @dataclass
 class ScanResult:
     config: ProjectConfig
-    language_support: LanguageSupport
+    language_supports: list[LanguageSupport]
     source_files: list[Path]
     test_files: list[Path]
+    test_files_by_language: dict[str, list[Path]]
+
+    @property
+    def language_support(self) -> LanguageSupport:
+        """Backward compat: return the first language support."""
+        return self.language_supports[0]
 
 
 def _find_subprojects(project_root: Path) -> list[Path]:
@@ -111,30 +117,55 @@ def scan_project(project_root: Path) -> ScanResult:
     """Scan the project directory and detect language, framework, and structure."""
     console.print(f"[blue]Scanning project at {project_root}...[/blue]")
 
-    lang_support = detect_language(project_root)
-    if lang_support is None:
+    subprojects = _find_subprojects(project_root)
+
+    lang_supports = detect_all_languages(
+        project_root,
+        extra_dirs=[project_root / sub for sub in subprojects],
+    )
+    if not lang_supports:
         raise RuntimeError(
             "Could not detect project language. "
             "Supported: Python (pyproject.toml/setup.py), JavaScript (package.json), Go (go.mod)"
         )
 
-    console.print(f"  Detected language: [green]{lang_support.language.value}[/green]")
-    console.print(f"  Framework: [green]{lang_support.framework.value}[/green]")
-
-    subprojects = _find_subprojects(project_root)
+    for ls in lang_supports:
+        console.print(f"  Detected language: [green]{ls.language.value}[/green] ({ls.framework.value})")
     source_dirs = _guess_source_dirs(project_root, subprojects)
     test_dirs = _guess_test_dirs(project_root, subprojects)
 
+    languages = [
+        LanguageConfig(language=ls.language, framework=ls.framework)
+        for ls in lang_supports
+    ]
+
     config = ProjectConfig(
-        language=lang_support.language,
-        framework=lang_support.framework,
+        languages=languages,
         test_dirs=test_dirs,
         source_dirs=source_dirs,
         project_root=str(project_root),
     )
 
-    source_files = lang_support.find_source_files(project_root, source_dirs)
-    test_files = lang_support.find_test_files(project_root, test_dirs)
+    # Collect files from all language supports
+    source_files: list[Path] = []
+    test_files: list[Path] = []
+    test_files_by_language: dict[str, list[Path]] = {}
+    seen_sources: set[Path] = set()
+    seen_tests: set[Path] = set()
+
+    for ls in lang_supports:
+        lang_test_files: list[Path] = []
+        for f in ls.find_source_files(project_root, source_dirs):
+            if f not in seen_sources:
+                seen_sources.add(f)
+                source_files.append(f)
+        for f in ls.find_test_files(project_root, test_dirs):
+            if f not in seen_tests:
+                seen_tests.add(f)
+                test_files.append(f)
+            lang_test_files.append(f)
+        if lang_test_files:
+            test_files_by_language[ls.language.value] = lang_test_files
 
     console.print(f"  Source dirs: {source_dirs}")
     console.print(f"  Test dirs: {test_dirs}")
@@ -143,7 +174,8 @@ def scan_project(project_root: Path) -> ScanResult:
 
     return ScanResult(
         config=config,
-        language_support=lang_support,
+        language_supports=lang_supports,
         source_files=source_files,
         test_files=test_files,
+        test_files_by_language=test_files_by_language,
     )

@@ -56,15 +56,28 @@ class QualityResult(BaseModel):
     source: str = "static"
 
 
-class ProjectConfig(BaseModel):
+class LanguageConfig(BaseModel):
     language: Language
     framework: TestFramework
+
+
+class ProjectConfig(BaseModel):
+    languages: list[LanguageConfig] = Field(default_factory=list)
     test_dirs: list[str] = Field(default_factory=lambda: ["tests"])
     source_dirs: list[str] = Field(default_factory=lambda: ["src"])
     project_root: str = "."
 
+    @property
+    def language(self) -> Language:
+        return self.languages[0].language
+
+    @property
+    def framework(self) -> TestFramework:
+        return self.languages[0].framework
+
 
 class TestRule(BaseModel):
+    language: str | None = None
     category: str
     pattern: str
     example: str = ""

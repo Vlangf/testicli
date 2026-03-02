@@ -67,7 +67,9 @@ def write_tests(
     settings: Settings,
 ) -> None:
     """Write all tests from a plan with generate-run-fix loop."""
-    rules_text = "\n".join(f"- [{r.category}] {r.pattern}" for r in rules) or "No specific rules."
+    lang_value = config.language.value
+    filtered_rules = [r for r in rules if r.language is None or r.language == lang_value]
+    rules_text = "\n".join(f"- [{r.category}] {r.pattern}" for r in filtered_rules) or "No specific rules."
 
     strategy = get_test_type_strategy(plan.test_type)
     type_additions = strategy.writing_prompt_additions() if strategy else ""

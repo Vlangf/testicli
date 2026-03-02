@@ -22,67 +22,96 @@ MAX_TOTAL_CONTENT = 200_000  # total chars to send
 def analyze_existing_tests(
     llm: LLMClient,
     config: ProjectConfig,
-    test_files: list[Path],
+    test_files_by_language: dict[str, list[Path]],
 ) -> list[TestRule]:
-    """Analyze existing test files and extract conventions/rules."""
-    if not test_files:
+    """Analyze existing test files and extract conventions/rules per language."""
+    if not test_files_by_language:
         console.print("[yellow]No existing test files found. Using default rules.[/yellow]")
         return _default_rules(config)
 
-    console.print(f"[blue]Analyzing {len(test_files)} test files...[/blue]")
+    all_rules: list[TestRule] = []
 
-    # Read test file contents (with size limits)
-    test_contents = []
-    total_size = 0
-    for tf in test_files:
-        try:
-            content = tf.read_text()
-        except (OSError, UnicodeDecodeError):
+    for lang_value, files in test_files_by_language.items():
+        if not files:
             continue
-        if len(content) > MAX_FILE_SIZE:
-            content = content[:MAX_FILE_SIZE] + "\n... (truncated)"
-        if total_size + len(content) > MAX_TOTAL_CONTENT:
-            break
-        test_contents.append(f"--- {tf} ---\n{content}")
-        total_size += len(content)
 
-    prompt = ANALYZE_TESTS_PROMPT.format(
-        language=config.language.value,
-        framework=config.framework.value,
-        test_files_content="\n\n".join(test_contents),
-    )
+        # Find matching LanguageConfig for this language
+        lang_config = next(
+            (lc for lc in config.languages if lc.language.value == lang_value),
+            None,
+        )
+        if lang_config is None:
+            continue
 
-    result = llm.generate_structured(
-        system=ANALYZE_TESTS_SYSTEM,
-        prompt=prompt,
-        tool_name="extract_rules",
-        tool_schema=ANALYZE_TESTS_TOOL_SCHEMA,
-        temperature=0.3,
-    )
+        console.print(f"[blue]Analyzing {len(files)} {lang_value} test files...[/blue]")
 
-    rules = [TestRule.model_validate(r) for r in result.get("rules", [])]
-    console.print(f"  Extracted [green]{len(rules)}[/green] rules")
-    return rules
+        # Read test file contents (with size limits)
+        test_contents = []
+        total_size = 0
+        for tf in files:
+            try:
+                content = tf.read_text()
+            except (OSError, UnicodeDecodeError):
+                continue
+            if len(content) > MAX_FILE_SIZE:
+                content = content[:MAX_FILE_SIZE] + "\n... (truncated)"
+            if total_size + len(content) > MAX_TOTAL_CONTENT:
+                break
+            test_contents.append(f"--- {tf} ---\n{content}")
+            total_size += len(content)
+
+        if not test_contents:
+            continue
+
+        prompt = ANALYZE_TESTS_PROMPT.format(
+            language=lang_config.language.value,
+            framework=lang_config.framework.value,
+            test_files_content="\n\n".join(test_contents),
+        )
+
+        result = llm.generate_structured(
+            system=ANALYZE_TESTS_SYSTEM,
+            prompt=prompt,
+            tool_name="extract_rules",
+            tool_schema=ANALYZE_TESTS_TOOL_SCHEMA,
+            temperature=0.3,
+        )
+
+        rules = [TestRule.model_validate(r) for r in result.get("rules", [])]
+        for rule in rules:
+            rule.language = lang_value
+        all_rules.extend(rules)
+        console.print(f"  Extracted [green]{len(rules)}[/green] {lang_value} rules")
+
+    if not all_rules:
+        return _default_rules(config)
+
+    return all_rules
 
 
 def _default_rules(config: ProjectConfig) -> list[TestRule]:
     """Return sensible defaults when no existing tests are found."""
-    if config.language.value == "python":
-        return [
-            TestRule(
-                category="naming",
-                pattern="Test files prefixed with test_, functions prefixed with test_",
-                confidence=1.0,
-            ),
-            TestRule(
-                category="structure",
-                pattern="One test file per source module",
-                confidence=0.8,
-            ),
-            TestRule(
-                category="assertions",
-                pattern="Use plain assert statements (pytest style)",
-                confidence=0.9,
-            ),
-        ]
-    return []
+    rules: list[TestRule] = []
+    for lc in config.languages:
+        if lc.language.value == "python":
+            rules.extend([
+                TestRule(
+                    language="python",
+                    category="naming",
+                    pattern="Test files prefixed with test_, functions prefixed with test_",
+                    confidence=1.0,
+                ),
+                TestRule(
+                    language="python",
+                    category="structure",
+                    pattern="One test file per source module",
+                    confidence=0.8,
+                ),
+                TestRule(
+                    language="python",
+                    category="assertions",
+                    pattern="Use plain assert statements (pytest style)",
+                    confidence=0.9,
+                ),
+            ])
+    return rules

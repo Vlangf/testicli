@@ -69,7 +69,9 @@ def create_plan(
             + strategy.planning_prompt_additions()
         )
 
-    rules_text = "\n".join(f"- [{r.category}] {r.pattern}" for r in rules) or "No specific rules."
+    lang_value = config.language.value
+    filtered_rules = [r for r in rules if r.language is None or r.language == lang_value]
+    rules_text = "\n".join(f"- [{r.category}] {r.pattern}" for r in filtered_rules) or "No specific rules."
 
     prompt = PLAN_TESTS_PROMPT.format(
         language=config.language.value,
