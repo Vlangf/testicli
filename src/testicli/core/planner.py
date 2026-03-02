@@ -12,6 +12,7 @@ from testicli.llm.prompts import (
     PLAN_TESTS_TOOL_SCHEMA,
 )
 from testicli.models import (
+    LanguageConfig,
     PlannedTest,
     ProjectConfig,
     TestPlan,
@@ -32,16 +33,28 @@ def create_plan(
     rules: list[TestRule],
     test_type: TestType,
     project_root: Path,
+    lang_config: LanguageConfig | None = None,
 ) -> TestPlan:
-    """Generate a test plan for the specified type."""
+    """Generate a test plan for the specified type.
+
+    If lang_config is provided, generates a plan for that specific language.
+    Otherwise falls back to config.language (first language) for backward compatibility.
+    """
     from testicli.languages.base import get_language_support
 
-    lang = get_language_support(config.language)
+    if lang_config is None:
+        lang_config = config.languages[0]
+
+    lang = get_language_support(lang_config.language)
     source_files = lang.find_source_files(project_root, config.source_dirs)
 
     if not source_files:
-        console.print("[yellow]No source files found[/yellow]")
-        return TestPlan(name=f"{test_type.value}_plan", test_type=test_type)
+        console.print(f"[yellow]No source files found for {lang_config.language.value}[/yellow]")
+        return TestPlan(
+            name=f"{lang_config.language.value}_{test_type.value}_plan",
+            test_type=test_type,
+            language=lang_config.language.value,
+        )
 
     # Read source files
     source_contents = []
@@ -69,13 +82,13 @@ def create_plan(
             + strategy.planning_prompt_additions()
         )
 
-    lang_value = config.language.value
+    lang_value = lang_config.language.value
     filtered_rules = [r for r in rules if r.language is None or r.language == lang_value]
     rules_text = "\n".join(f"- [{r.category}] {r.pattern}" for r in filtered_rules) or "No specific rules."
 
     prompt = PLAN_TESTS_PROMPT.format(
-        language=config.language.value,
-        framework=config.framework.value,
+        language=lang_config.language.value,
+        framework=lang_config.framework.value,
         test_type=test_type.value,
         type_specific_context=type_context,
         rules=rules_text,
@@ -104,8 +117,9 @@ def create_plan(
         )
 
     plan = TestPlan(
-        name=f"{test_type.value}_plan",
+        name=f"{lang_config.language.value}_{test_type.value}_plan",
         test_type=test_type,
+        language=lang_config.language.value,
         tests=tests,
     )
 

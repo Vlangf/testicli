@@ -7,7 +7,7 @@ from pathlib import Path
 from rich.console import Console
 
 from testicli.languages.base import get_language_support
-from testicli.models import ProjectConfig, TestRunResult
+from testicli.models import Language, ProjectConfig, TestRunResult
 
 console = Console()
 
@@ -17,10 +17,11 @@ def run_test(
     config: ProjectConfig,
     project_root: Path,
     *,
+    language: Language | None = None,
     timeout: int = 60,
 ) -> TestRunResult:
     """Run a single test file and return the result."""
-    lang = get_language_support(config.language)
+    lang = get_language_support(language or config.language)
     cmd = lang.test_command(test_file, project_root)
 
     console.print(f"  Running: [dim]{' '.join(cmd)}[/dim]")

@@ -68,9 +68,12 @@ class Store:
 
     # --- Plans ---
 
+    def _plan_filename(self, plan: TestPlan) -> str:
+        lang_part = f"_{plan.language}" if plan.language else ""
+        return f"plan_{plan.created_at:%Y%m%d_%H%M%S}_{plan.test_type.value}{lang_part}.yaml"
+
     def save_plan(self, plan: TestPlan) -> None:
-        filename = f"plan_{plan.created_at:%Y%m%d_%H%M%S}_{plan.test_type.value}.yaml"
-        path = self.plans_dir / filename
+        path = self.plans_dir / self._plan_filename(plan)
         _dump_yaml(path, plan.model_dump(mode="json"))
 
     def load_plans(self) -> list[TestPlan]:
@@ -89,8 +92,7 @@ class Store:
 
     def update_plan(self, plan: TestPlan) -> None:
         """Overwrite the plan file matching this plan's timestamp and type."""
-        filename = f"plan_{plan.created_at:%Y%m%d_%H%M%S}_{plan.test_type.value}.yaml"
-        path = self.plans_dir / filename
+        path = self.plans_dir / self._plan_filename(plan)
         _dump_yaml(path, plan.model_dump(mode="json"))
 
     # --- Failures ---

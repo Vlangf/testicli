@@ -105,6 +105,64 @@ def test_save_and_load_plan(tmp_path: Path):
     assert len(plans[0].tests) == 1
 
 
+def test_save_and_load_plan_with_language(tmp_path: Path):
+    ensure_agent_dir(tmp_path)
+    store = Store(tmp_path)
+
+    plan = TestPlan(
+        name="python_integration_plan",
+        test_type=TestType.INTEGRATION,
+        language="python",
+        tests=[
+            PlannedTest(
+                id="t1",
+                name="test_something",
+                description="Test it",
+                test_type=TestType.INTEGRATION,
+                target_file="src/app.py",
+                output_file="tests/test_app.py",
+            ),
+        ],
+    )
+    store.save_plan(plan)
+
+    plans = store.load_plans()
+    assert len(plans) == 1
+    assert plans[0].language == "python"
+    assert plans[0].name == "python_integration_plan"
+
+
+def test_save_multiple_language_plans(tmp_path: Path):
+    """Plans for different languages should not overwrite each other."""
+    from datetime import datetime
+
+    ensure_agent_dir(tmp_path)
+    store = Store(tmp_path)
+
+    now = datetime.now()
+    py_plan = TestPlan(
+        name="python_security_plan",
+        test_type=TestType.SECURITY,
+        language="python",
+        created_at=now,
+        tests=[],
+    )
+    js_plan = TestPlan(
+        name="javascript_security_plan",
+        test_type=TestType.SECURITY,
+        language="javascript",
+        created_at=now,
+        tests=[],
+    )
+    store.save_plan(py_plan)
+    store.save_plan(js_plan)
+
+    plans = store.load_plans()
+    assert len(plans) == 2
+    languages = {p.language for p in plans}
+    assert languages == {"python", "javascript"}
+
+
 def test_load_latest_plan(tmp_path: Path):
     ensure_agent_dir(tmp_path)
     store = Store(tmp_path)

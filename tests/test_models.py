@@ -93,6 +93,32 @@ def test_planned_test_defaults():
     assert test.error is None
 
 
+def test_test_plan_language_field():
+    plan = TestPlan(
+        name="python_integration_plan",
+        test_type=TestType.INTEGRATION,
+        language="python",
+    )
+    assert plan.language == "python"
+
+
+def test_test_plan_language_none_by_default():
+    plan = TestPlan(name="plan", test_type=TestType.INTEGRATION)
+    assert plan.language is None
+
+
+def test_test_plan_language_serialization():
+    plan = TestPlan(
+        name="python_security_plan",
+        test_type=TestType.SECURITY,
+        language="python",
+    )
+    data = plan.model_dump()
+    assert data["language"] == "python"
+    restored = TestPlan.model_validate(data)
+    assert restored.language == "python"
+
+
 def test_test_plan_summary():
     plan = TestPlan(
         name="my_plan",

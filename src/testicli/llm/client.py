@@ -6,7 +6,14 @@ import json
 import re
 from typing import Any
 
-from claude_agent_sdk import ClaudeAgentOptions, AssistantMessage, TextBlock, query
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
+    AssistantMessage,
+    SdkMcpTool,
+    TextBlock,
+    create_sdk_mcp_server,
+    query,
+)
 from rich.console import Console
 
 from testicli.config import Settings
@@ -51,6 +58,41 @@ class LLMClient:
     ) -> str:
         """Code generation."""
         return asyncio.run(self._query_text(system, prompt))
+
+    def generate_with_tools(
+        self,
+        system: str,
+        prompt: str,
+        tools: list[SdkMcpTool],
+        *,
+        max_turns: int = 5,
+    ) -> str:
+        """Run Claude in agent mode with MCP tools. Returns collected text."""
+        return asyncio.run(self._query_agentic(system, prompt, tools, max_turns))
+
+    async def _query_agentic(
+        self,
+        system: str,
+        prompt: str,
+        tools: list[SdkMcpTool],
+        max_turns: int,
+    ) -> str:
+        """Run Claude in agent mode with in-process MCP tools."""
+        mcp_server = create_sdk_mcp_server(name="testicli_tools", tools=tools)
+        options = ClaudeAgentOptions(
+            model=self.settings.model,
+            system_prompt=system,
+            mcp_servers={"testicli_tools": mcp_server},
+            allowed_tools=[t.name for t in tools],
+            max_turns=max_turns,
+        )
+        parts: list[str] = []
+        async for message in query(prompt=prompt, options=options):
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        parts.append(block.text)
+        return "\n".join(parts)
 
     async def _query_text(self, system: str, prompt: str) -> str:
         """Send a query and collect text from the response."""

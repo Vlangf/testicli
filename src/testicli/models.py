@@ -100,6 +100,7 @@ class PlannedTest(BaseModel):
 class TestPlan(BaseModel):
     name: str
     test_type: TestType
+    language: str | None = None
     created_at: datetime = Field(default_factory=datetime.now)
     tests: list[PlannedTest] = Field(default_factory=list)
 

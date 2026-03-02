@@ -101,17 +101,18 @@ PLAN_TESTS_TOOL_SCHEMA = {
     "required": ["tests"],
 }
 
-# --- Writer prompts ---
+# --- Writer prompts (agentic mode) ---
 
-WRITE_TEST_SYSTEM = """\
-You are an expert test engineer. Write production-quality test code that follows \
-the project's conventions and passes on first run.
+WRITE_TEST_SYSTEM_AGENTIC = """\
+You are an expert test engineer.
+Write a production-quality test file using the write_file tool.
 
 IMPORTANT:
-- Output ONLY the test code, no markdown fences, no explanations
+- You MUST call write_file with the complete test code
 - Include all necessary imports
 - Follow the project's existing test conventions exactly
 - Make tests deterministic and independent
+- Do NOT output the code as text — use the write_file tool
 """
 
 WRITE_TEST_PROMPT = """\
@@ -132,16 +133,18 @@ Write a test for:
 - Name: {test_name}
 - Description: {test_description}
 
-Output ONLY the test code.
+Write the test code to file: {output_file}
+Use the write_file tool to create the file.
 """
 
-FIX_TEST_SYSTEM = """\
+FIX_TEST_SYSTEM_AGENTIC = """\
 You are an expert test engineer. Fix the failing test code based on the error output.
 
 IMPORTANT:
-- Output ONLY the complete fixed test code, no markdown fences, no explanations
+- You MUST call write_file with the complete fixed test code
 - Preserve all imports and test structure
 - Fix only what's broken, don't change test intent
+- Do NOT output the code as text — use the write_file tool
 """
 
 FIX_TEST_PROMPT = """\
@@ -162,7 +165,8 @@ Source file under test ({target_file}):
 {source_content}
 ```
 
-Output ONLY the complete fixed test code.
+Write the fixed test code to file: {output_file}
+Use the write_file tool to create the file.
 """
 
 # --- Failure analyzer prompts ---

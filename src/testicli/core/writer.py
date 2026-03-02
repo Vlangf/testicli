@@ -1,9 +1,9 @@
-"""Generate test code, run, fix loop."""
+"""Generate test code via agent mode (tool-based), run, fix loop."""
 
 
-import re
 from pathlib import Path
 
+from claude_agent_sdk import tool
 from rich.console import Console
 
 from testicli.config import Settings
@@ -11,11 +11,13 @@ from testicli.core.runner import run_test
 from testicli.llm.client import LLMClient
 from testicli.llm.prompts import (
     FIX_TEST_PROMPT,
-    FIX_TEST_SYSTEM,
+    FIX_TEST_SYSTEM_AGENTIC,
     WRITE_TEST_PROMPT,
-    WRITE_TEST_SYSTEM,
+    WRITE_TEST_SYSTEM_AGENTIC,
 )
 from testicli.models import (
+    Language,
+    LanguageConfig,
     PlannedTest,
     ProjectConfig,
     TestFailure,
@@ -27,20 +29,6 @@ from testicli.storage.store import Store
 from testicli.test_types.base import get_test_type_strategy
 
 console = Console()
-
-
-def _strip_markdown_fences(code: str) -> str:
-    """Remove markdown code fences if present."""
-    code = code.strip()
-    if code.startswith("```"):
-        # Remove first line (```python or ```)
-        lines = code.split("\n")
-        lines = lines[1:]
-        # Remove last ``` if present
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        code = "\n".join(lines)
-    return code
 
 
 def _read_source_file(target_file: str, project_root: Path) -> str:
@@ -57,6 +45,124 @@ def _read_source_file(target_file: str, project_root: Path) -> str:
         return "(could not read file)"
 
 
+def _resolve_language(plan: TestPlan, config: ProjectConfig) -> tuple[str, str]:
+    """Resolve language and framework values from plan, falling back to config."""
+    if plan.language:
+        for lc in config.languages:
+            if lc.language.value == plan.language:
+                return lc.language.value, lc.framework.value
+        # Plan has a language string but no matching config — use it with first framework
+        return plan.language, config.framework.value
+    return config.language.value, config.framework.value
+
+
+def _resolve_language_enum(plan: TestPlan, config: ProjectConfig) -> Language:
+    """Resolve Language enum for runner from plan, falling back to config."""
+    if plan.language:
+        for lc in config.languages:
+            if lc.language.value == plan.language:
+                return lc.language
+    return config.language
+
+
+def _make_write_file_tool(project_root: Path, result: dict):
+    """Create a write_file tool bound to project_root, recording result in `result` dict."""
+
+    @tool("write_file", "Write content to a file", {"file_path": str, "content": str})
+    async def write_file(args):
+        path = Path(args["file_path"])
+        if not path.is_absolute():
+            path = project_root / path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(args["content"])
+        result["written"] = True
+        result["path"] = str(path)
+        result["content"] = args["content"]
+        return {
+            "content": [
+                {"type": "text", "text": f"Written {len(args['content'])} bytes to {path}"}
+            ]
+        }
+
+    return write_file
+
+
+def _generate_test_agentic(
+    llm: LLMClient,
+    language: str,
+    framework: str,
+    rules_text: str,
+    type_additions: str,
+    planned_test: PlannedTest,
+    source_content: str,
+    project_root: Path,
+) -> str | None:
+    """Generate a test file via agent mode. Returns file content or None on failure."""
+    test_path = project_root / planned_test.output_file
+    result: dict = {"written": False}
+    write_file = _make_write_file_tool(project_root, result)
+
+    prompt = WRITE_TEST_PROMPT.format(
+        language=language,
+        framework=framework,
+        rules=rules_text,
+        type_specific_additions=type_additions,
+        target_file=planned_test.target_file,
+        source_content=source_content,
+        test_name=planned_test.name,
+        test_description=planned_test.description,
+        output_file=planned_test.output_file,
+    )
+
+    llm.generate_with_tools(
+        system=WRITE_TEST_SYSTEM_AGENTIC,
+        prompt=prompt,
+        tools=[write_file],
+    )
+
+    if not result["written"] or not test_path.exists():
+        return None
+    content = test_path.read_text()
+    if not content.strip():
+        return None
+    return content
+
+
+def _fix_test_agentic(
+    llm: LLMClient,
+    test_code: str,
+    error_output: str,
+    planned_test: PlannedTest,
+    source_content: str,
+    project_root: Path,
+) -> str | None:
+    """Fix a failing test via agent mode. Returns fixed content or None on failure."""
+    test_path = project_root / planned_test.output_file
+    result: dict = {"written": False}
+    write_file = _make_write_file_tool(project_root, result)
+
+    prompt = FIX_TEST_PROMPT.format(
+        test_code=test_code,
+        error_output=error_output,
+        target_file=planned_test.target_file,
+        source_content=source_content,
+        output_file=planned_test.output_file,
+    )
+
+    llm.generate_with_tools(
+        system=FIX_TEST_SYSTEM_AGENTIC,
+        prompt=prompt,
+        tools=[write_file],
+    )
+
+    if not result["written"] or not test_path.exists():
+        return None
+    content = test_path.read_text()
+    if not content.strip():
+        return None
+    return content
+
+
 def write_tests(
     llm: LLMClient,
     config: ProjectConfig,
@@ -67,9 +173,14 @@ def write_tests(
     settings: Settings,
 ) -> None:
     """Write all tests from a plan with generate-run-fix loop."""
-    lang_value = config.language.value
-    filtered_rules = [r for r in rules if r.language is None or r.language == lang_value]
-    rules_text = "\n".join(f"- [{r.category}] {r.pattern}" for r in filtered_rules) or "No specific rules."
+    language, framework = _resolve_language(plan, config)
+    run_language = _resolve_language_enum(plan, config)
+
+    filtered_rules = [r for r in rules if r.language is None or r.language == language]
+    rules_text = (
+        "\n".join(f"- [{r.category}] {r.pattern}" for r in filtered_rules)
+        or "No specific rules."
+    )
 
     strategy = get_test_type_strategy(plan.test_type)
     type_additions = strategy.writing_prompt_additions() if strategy else ""
@@ -83,41 +194,49 @@ def write_tests(
 
         source_content = _read_source_file(planned_test.target_file, project_root)
 
-        # Step 1: Generate test code
-        code = _generate_test(
-            llm, config, rules_text, type_additions,
-            planned_test, source_content,
+        # Step 1: Generate test code via agent mode
+        console.print("  Generating...")
+        code = _generate_test_agentic(
+            llm, language, framework, rules_text, type_additions,
+            planned_test, source_content, project_root,
         )
-        code = _strip_markdown_fences(code)
 
-        # Step 2: Write to file
-        test_path = project_root / planned_test.output_file
-        test_path.parent.mkdir(parents=True, exist_ok=True)
-        test_path.write_text(code)
+        if code is None:
+            console.print("  [red]FAILED: empty or no file generated[/red]")
+            planned_test.status = TestStatus.FAILED
+            planned_test.error = "Agent did not produce a test file"
+            store.update_plan(plan)
+            continue
+
         console.print(f"  Wrote: {planned_test.output_file}")
 
-        # Step 3: Run test
-        result = run_test(test_path, config, project_root)
+        # Step 2: Run test
+        test_path = project_root / planned_test.output_file
+        result = run_test(test_path, config, project_root, language=run_language)
 
         if result.success:
-            console.print(f"  [green]PASSED[/green]")
+            console.print("  [green]PASSED[/green]")
             planned_test.status = TestStatus.PASSED
             planned_test.code = code
             store.update_plan(plan)
             continue
 
-        console.print(f"  [yellow]FAILED (attempt 1)[/yellow]")
+        console.print("  [yellow]FAILED (attempt 1)[/yellow]")
 
-        # Step 4: Fix loop
+        # Step 3: Fix loop
         for attempt in range(2, settings.max_fix_attempts + 1):
-            fixed_code = _fix_test(
-                llm, code, result.output, planned_test.target_file, source_content,
+            console.print(f"  Fixing (attempt {attempt})...")
+            fixed_code = _fix_test_agentic(
+                llm, code, result.output, planned_test, source_content, project_root,
             )
-            fixed_code = _strip_markdown_fences(fixed_code)
-            test_path.write_text(fixed_code)
-            code = fixed_code
 
-            result = run_test(test_path, config, project_root)
+            if fixed_code is None:
+                console.print(f"  [yellow]Fix produced empty file (attempt {attempt})[/yellow]")
+                continue
+
+            code = fixed_code
+            result = run_test(test_path, config, project_root, language=run_language)
+
             if result.success:
                 console.print(f"  [green]PASSED (attempt {attempt})[/green]")
                 planned_test.status = TestStatus.PASSED
@@ -127,7 +246,6 @@ def write_tests(
             console.print(f"  [yellow]FAILED (attempt {attempt})[/yellow]")
 
         if not result.success:
-            # Step 5: Save failure, move on
             console.print(f"  [red]FAILED after {settings.max_fix_attempts} attempts[/red]")
             planned_test.status = TestStatus.FAILED
             planned_test.code = code
@@ -143,40 +261,3 @@ def write_tests(
             store.save_failure(failure)
 
         store.update_plan(plan)
-
-
-def _generate_test(
-    llm: LLMClient,
-    config: ProjectConfig,
-    rules_text: str,
-    type_additions: str,
-    planned_test: PlannedTest,
-    source_content: str,
-) -> str:
-    prompt = WRITE_TEST_PROMPT.format(
-        language=config.language.value,
-        framework=config.framework.value,
-        rules=rules_text,
-        type_specific_additions=type_additions,
-        target_file=planned_test.target_file,
-        source_content=source_content,
-        test_name=planned_test.name,
-        test_description=planned_test.description,
-    )
-    return llm.generate_code(system=WRITE_TEST_SYSTEM, prompt=prompt)
-
-
-def _fix_test(
-    llm: LLMClient,
-    test_code: str,
-    error_output: str,
-    target_file: str,
-    source_content: str,
-) -> str:
-    prompt = FIX_TEST_PROMPT.format(
-        test_code=test_code,
-        error_output=error_output,
-        target_file=target_file,
-        source_content=source_content,
-    )
-    return llm.generate_code(system=FIX_TEST_SYSTEM, prompt=prompt)

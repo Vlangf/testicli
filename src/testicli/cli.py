@@ -41,6 +41,12 @@ app = typer.Typer(name="testicli", help="AI-powered test generator using Claude 
 console = Console()
 
 
+def _plan_match_key(plan: "TestPlan") -> str:
+    """Build the full plan filename string for matching."""
+    lang_part = f"_{plan.language}" if plan.language else ""
+    return f"plan_{plan.created_at:%Y%m%d_%H%M%S}_{plan.test_type.value}{lang_part}.yaml"
+
+
 def _get_settings() -> Settings:
     if not shutil.which("claude"):
         console.print("[red]Error: 'claude' CLI not found. Install Claude Code and run 'claude login'.[/red]")
@@ -108,10 +114,14 @@ def plan(
             console.print(f"[red]Unknown test type: {type_str}. Valid: {[t.value for t in TestType]}[/red]")
             continue
 
-        console.print(f"\n[blue]Creating {test_type.value} test plan...[/blue]")
-        test_plan = create_plan(llm, config, rules, test_type, project_root)
-        store.save_plan(test_plan)
-        console.print(f"[green]Plan saved with {len(test_plan.tests)} tests[/green]")
+        for lang_config in config.languages:
+            console.print(
+                f"\n[blue]Creating {test_type.value} test plan"
+                f" for {lang_config.language.value}...[/blue]"
+            )
+            test_plan = create_plan(llm, config, rules, test_type, project_root, lang_config)
+            store.save_plan(test_plan)
+            console.print(f"[green]Plan saved with {len(test_plan.tests)} tests[/green]")
 
 
 @app.command()
@@ -136,7 +146,7 @@ def write(
 
     if plan_name:
         plans = store.load_plans()
-        matching = [p for p in plans if plan_name in f"plan_{p.created_at:%Y%m%d_%H%M%S}_{p.test_type.value}"]
+        matching = [p for p in plans if plan_name in _plan_match_key(p)]
         if not matching:
             console.print(f"[red]No plan matching '{plan_name}' found[/red]")
             raise typer.Exit(1)
@@ -195,6 +205,7 @@ def review(
     """Review quality of generated tests."""
     from testicli.core.quality import fix_quality_issues, validate_test_quality
     from testicli.core.runner import run_test
+    from testicli.models import Language
 
     project_root = path.resolve()
     store = Store(project_root)
@@ -211,7 +222,7 @@ def review(
 
     if plan_name:
         plans = store.load_plans()
-        matching = [p for p in plans if plan_name in f"plan_{p.created_at:%Y%m%d_%H%M%S}_{p.test_type.value}"]
+        matching = [p for p in plans if plan_name in _plan_match_key(p)]
         if not matching:
             console.print(f"[red]No plan matching '{plan_name}' found[/red]")
             raise typer.Exit(1)
@@ -229,6 +240,14 @@ def review(
         raise typer.Exit(0)
 
     console.print(f"\n[blue]Reviewing {len(reviewable)} tests...[/blue]\n")
+
+    # Resolve language for runner
+    run_language: Language | None = None
+    if test_plan.language:
+        try:
+            run_language = Language(test_plan.language)
+        except ValueError:
+            pass
 
     # Results table
     results_table = Table(title="Quality Review Results")
@@ -249,7 +268,7 @@ def review(
 
         result = validate_test_quality(
             code=planned_test.code,
-            language=config.language.value,
+            language=test_plan.language or config.language.value,
             target_file=planned_test.target_file,
             source_content=source_content,
             test_name=planned_test.name,
@@ -298,7 +317,7 @@ def review(
                 original_code = current_code
                 test_path.write_text(fixed_code)
 
-                run_result = run_test(test_path, config, project_root)
+                run_result = run_test(test_path, config, project_root, language=run_language)
                 if not run_result.success:
                     console.print(f"  [yellow]Fix attempt {attempt} broke the test, reverting[/yellow]")
                     test_path.write_text(original_code)
@@ -307,7 +326,7 @@ def review(
                 # Re-check quality
                 recheck = validate_test_quality(
                     code=fixed_code,
-                    language=config.language.value,
+                    language=test_plan.language or config.language.value,
                     target_file=planned_test.target_file,
                     source_content=source_content,
                     test_name=planned_test.name,
