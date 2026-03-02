@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "AI test agent powered by Claude — scans your project, learns conventions from existing tests, generates integration/e2e/fuzzing/security tests, runs them, and auto-fixes failures. Supports Python, JavaScript, and Go."
 requires-python = ">=3.14"
 dependencies = [
-    "anthropic>=0.52.0",
+    "claude-agent-sdk",
     "typer>=0.15.0",
     "rich>=13.9.0",
     "pydantic>=2.10.0",

@@ -1,6 +1,7 @@
 """CLI entry point for testicli."""
 
 
+import shutil
 from pathlib import Path
 
 import typer
@@ -41,11 +42,10 @@ console = Console()
 
 
 def _get_settings() -> Settings:
-    settings = Settings.from_env()
-    if not settings.anthropic_api_key:
-        console.print("[red]Error: ANTHROPIC_API_KEY environment variable not set[/red]")
+    if not shutil.which("claude"):
+        console.print("[red]Error: 'claude' CLI not found. Install Claude Code and run 'claude login'.[/red]")
         raise typer.Exit(1)
-    return settings
+    return Settings.from_env()
 
 
 @app.command()

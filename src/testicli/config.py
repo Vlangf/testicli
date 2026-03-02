@@ -6,12 +6,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_MODEL = "claude-sonnet-4-6"
 AGENT_DIR = ".testicli"
 
 
 class Settings(BaseModel):
-    anthropic_api_key: str = Field(default="")
     model: str = Field(default=DEFAULT_MODEL)
     max_fix_attempts: int = Field(default=2)
     code_temperature: float = Field(default=0.0)
@@ -20,7 +19,6 @@ class Settings(BaseModel):
     @classmethod
     def from_env(cls) -> Settings:
         return cls(
-            anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
             model=os.environ.get("TEST_AGENT_MODEL", DEFAULT_MODEL),
             max_fix_attempts=int(os.environ.get("TEST_AGENT_MAX_FIX_ATTEMPTS", "2")),
         )
