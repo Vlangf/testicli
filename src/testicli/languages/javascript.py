@@ -31,19 +31,27 @@ class JavaScriptSupport:
                     files.append(f)
         return sorted(files)
 
-    def find_test_files(self, project_root: Path, test_dir: str) -> list[Path]:
-        test_path = project_root / test_dir
-        if not test_path.exists():
-            # Also check for co-located test files
-            test_path = project_root / "src"
-        if not test_path.exists():
-            return []
-
+    def find_test_files(self, project_root: Path, test_dirs: list[str]) -> list[Path]:
         extensions = ("*.test.js", "*.test.ts", "*.spec.js", "*.spec.ts",
                        "*.test.jsx", "*.test.tsx", "*.spec.jsx", "*.spec.tsx")
         files: list[Path] = []
-        for ext in extensions:
-            files.extend(test_path.rglob(ext))
+        searched: set[Path] = set()
+
+        for test_dir in test_dirs:
+            test_path = project_root / test_dir
+            if not test_path.exists() or test_path in searched:
+                continue
+            searched.add(test_path)
+            for ext in extensions:
+                files.extend(test_path.rglob(ext))
+
+        # Fallback: check for co-located test files in src/
+        if not files:
+            src_path = project_root / "src"
+            if src_path.exists() and src_path not in searched:
+                for ext in extensions:
+                    files.extend(src_path.rglob(ext))
+
         return sorted(files)
 
     def test_command(self, test_file: Path, project_root: Path) -> list[str]:
@@ -53,10 +61,10 @@ class JavaScriptSupport:
             return ["npx", "vitest", "run", str(rel_path)]
         return ["npx", "jest", str(rel_path), "--no-coverage"]
 
-    def test_file_path(self, source_file: Path, test_dir: str) -> Path:
+    def test_file_path(self, source_file: Path, test_dirs: list[str]) -> Path:
         stem = source_file.stem
         suffix = source_file.suffix
-        return Path(test_dir) / f"{stem}.test{suffix}"
+        return Path(test_dirs[0]) / f"{stem}.test{suffix}"
 
     def parse_test_output(self, output: str, return_code: int) -> TestRunResult:
         return TestRunResult(

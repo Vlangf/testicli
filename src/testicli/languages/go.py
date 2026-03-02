@@ -32,7 +32,7 @@ class GoSupport:
                 files.append(f)
         return sorted(files)
 
-    def find_test_files(self, project_root: Path, test_dir: str) -> list[Path]:
+    def find_test_files(self, project_root: Path, test_dirs: list[str]) -> list[Path]:
         # Go tests are co-located, so scan whole project
         files: list[Path] = []
         for f in project_root.rglob("*_test.go"):
@@ -45,7 +45,7 @@ class GoSupport:
         pkg_dir = test_file.parent.relative_to(project_root)
         return ["go", "test", f"./{pkg_dir}/...", "-v", "-run", test_file.stem.replace("_test", "")]
 
-    def test_file_path(self, source_file: Path, test_dir: str) -> Path:
+    def test_file_path(self, source_file: Path, test_dirs: list[str]) -> Path:
         # Go tests are co-located
         return source_file.parent / f"{source_file.stem}_test.go"
 

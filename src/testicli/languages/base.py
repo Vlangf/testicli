@@ -20,7 +20,7 @@ class LanguageSupport(Protocol):
         """Find all source files in the project."""
         ...
 
-    def find_test_files(self, project_root: Path, test_dir: str) -> list[Path]:
+    def find_test_files(self, project_root: Path, test_dirs: list[str]) -> list[Path]:
         """Find all existing test files."""
         ...
 
@@ -28,7 +28,7 @@ class LanguageSupport(Protocol):
         """Return the command to run a specific test file."""
         ...
 
-    def test_file_path(self, source_file: Path, test_dir: str) -> Path:
+    def test_file_path(self, source_file: Path, test_dirs: list[str]) -> Path:
         """Generate the test file path for a given source file."""
         ...
 

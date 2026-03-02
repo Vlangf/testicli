@@ -24,7 +24,7 @@ def test_save_and_load_config(tmp_path: Path):
     config = ProjectConfig(
         language=Language.PYTHON,
         framework=TestFramework.PYTEST,
-        test_dir="tests",
+        test_dirs=["tests"],
         source_dirs=["src"],
     )
     store.save_config(config)

@@ -36,22 +36,23 @@ class PythonSupport:
                 files.append(py_file)
         return sorted(files)
 
-    def find_test_files(self, project_root: Path, test_dir: str) -> list[Path]:
-        test_path = project_root / test_dir
-        if not test_path.exists():
-            return []
+    def find_test_files(self, project_root: Path, test_dirs: list[str]) -> list[Path]:
         files: list[Path] = []
-        for py_file in test_path.rglob("*.py"):
-            if py_file.name.startswith("test_") or py_file.name.endswith("_test.py"):
-                files.append(py_file)
+        for test_dir in test_dirs:
+            test_path = project_root / test_dir
+            if not test_path.exists():
+                continue
+            for py_file in test_path.rglob("*.py"):
+                if py_file.name.startswith("test_") or py_file.name.endswith("_test.py"):
+                    files.append(py_file)
         return sorted(files)
 
     def test_command(self, test_file: Path, project_root: Path) -> list[str]:
         rel_path = test_file.relative_to(project_root)
         return ["python", "-m", "pytest", str(rel_path), "-v", "--tb=short", "--no-header"]
 
-    def test_file_path(self, source_file: Path, test_dir: str) -> Path:
-        return Path(test_dir) / f"test_{source_file.stem}.py"
+    def test_file_path(self, source_file: Path, test_dirs: list[str]) -> Path:
+        return Path(test_dirs[0]) / f"test_{source_file.stem}.py"
 
     def parse_test_output(self, output: str, return_code: int) -> TestRunResult:
         return TestRunResult(

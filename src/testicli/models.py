@@ -59,7 +59,7 @@ class QualityResult(BaseModel):
 class ProjectConfig(BaseModel):
     language: Language
     framework: TestFramework
-    test_dir: str = "tests"
+    test_dirs: list[str] = Field(default_factory=lambda: ["tests"])
     source_dirs: list[str] = Field(default_factory=lambda: ["src"])
     project_root: str = "."
 

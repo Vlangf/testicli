@@ -18,7 +18,7 @@ from testicli.models import (
 
 def test_project_config_defaults():
     config = ProjectConfig(language=Language.PYTHON, framework=TestFramework.PYTEST)
-    assert config.test_dir == "tests"
+    assert config.test_dirs == ["tests"]
     assert config.source_dirs == ["src"]
     assert config.project_root == "."
 
@@ -27,12 +27,12 @@ def test_project_config_custom():
     config = ProjectConfig(
         language=Language.JAVASCRIPT,
         framework=TestFramework.JEST,
-        test_dir="__tests__",
+        test_dirs=["__tests__"],
         source_dirs=["src", "lib"],
         project_root="/my/project",
     )
     assert config.language == Language.JAVASCRIPT
-    assert config.test_dir == "__tests__"
+    assert config.test_dirs == ["__tests__"]
 
 
 def test_test_rule():
