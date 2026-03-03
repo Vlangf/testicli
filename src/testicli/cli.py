@@ -22,6 +22,7 @@ from testicli.models import (
     TestType,
 )
 from testicli.storage.store import Store
+from testicli.ui import cat_spinner
 
 # Register language support
 from testicli.languages.base import register_language
@@ -119,13 +120,12 @@ def _run_plan_for_type(
     for lc in lang_configs:
         existing_plan = store.find_plan(test_type, lc.language.value)
         action = "Updating" if existing_plan else "Creating"
-        console.print(
-            f"\n[blue]{action} {test_type.value} test plan"
-            f" for {lc.language.value}...[/blue]"
-        )
-        test_plan = create_plan(
-            llm, config, rules, test_type, project_root, lc, existing_plan
-        )
+        with cat_spinner(
+            f"{action} {test_type.value} test plan for {lc.language.value}..."
+        ):
+            test_plan = create_plan(
+                llm, config, rules, test_type, project_root, lc, existing_plan
+            )
         store.save_plan(test_plan)
         console.print(f"[green]Plan saved with {len(test_plan.tests)} tests[/green]")
 
@@ -142,8 +142,8 @@ def _run_write(
     """Write tests for a given plan."""
     from testicli.core.writer import write_tests
 
-    console.print(f"\n[blue]Writing tests from plan ({test_plan.test_type.value})...[/blue]")
-    write_tests(llm, config, rules, test_plan, store, project_root, settings)
+    with cat_spinner(f"Writing tests from plan ({test_plan.test_type.value})..."):
+        write_tests(llm, config, rules, test_plan, store, project_root, settings)
     console.print("\n[bold green]Done![/bold green]")
 
 
@@ -342,8 +342,8 @@ def _run_analyze(
         console.print("[yellow]No failures recorded. Nothing to analyze.[/yellow]")
         return
 
-    console.print(f"[blue]Analyzing {len(failures)} failures...[/blue]")
-    new_rules = analyze_failures(llm, rules, failures)
+    with cat_spinner(f"Analyzing {len(failures)} failures..."):
+        new_rules = analyze_failures(llm, rules, failures)
 
     if update_rules and new_rules:
         store.save_rules(new_rules)

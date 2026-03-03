@@ -6,6 +6,7 @@ from pathlib import Path
 from rich.console import Console
 
 from testicli.llm.client import LLMClient
+from testicli.ui import cat_spinner
 from testicli.llm.prompts import (
     ANALYZE_TESTS_PROMPT,
     ANALYZE_TESTS_SYSTEM,
@@ -43,8 +44,6 @@ def analyze_existing_tests(
         if lang_config is None:
             continue
 
-        console.print(f"[blue]Analyzing {len(files)} {lang_value} test files...[/blue]")
-
         # Read test file contents (with size limits)
         test_contents = []
         total_size = 0
@@ -69,13 +68,14 @@ def analyze_existing_tests(
             test_files_content="\n\n".join(test_contents),
         )
 
-        result = llm.generate_structured(
-            system=ANALYZE_TESTS_SYSTEM,
-            prompt=prompt,
-            tool_name="extract_rules",
-            tool_schema=ANALYZE_TESTS_TOOL_SCHEMA,
-            temperature=0.3,
-        )
+        with cat_spinner(f"Analyzing {len(files)} {lang_value} test files..."):
+            result = llm.generate_structured(
+                system=ANALYZE_TESTS_SYSTEM,
+                prompt=prompt,
+                tool_name="extract_rules",
+                tool_schema=ANALYZE_TESTS_TOOL_SCHEMA,
+                temperature=0.3,
+            )
 
         rules = [TestRule.model_validate(r) for r in result.get("rules", [])]
         for rule in rules:

@@ -11,6 +11,7 @@ from rich.console import Console
 
 from testicli.languages.base import detect_all_languages, LanguageSupport
 from testicli.models import LanguageConfig, ProjectConfig, TestDirInfo, TestType
+from testicli.ui import cat_spinner
 
 console = Console()
 
@@ -274,60 +275,59 @@ def _build_test_dir_info(
 
 def scan_project(project_root: Path) -> ScanResult:
     """Scan the project directory and detect language, framework, and structure."""
-    console.print(f"[blue]Scanning project at {project_root}...[/blue]")
+    with cat_spinner(f"Scanning project at {project_root}..."):
+        subprojects = _find_subprojects(project_root)
 
-    subprojects = _find_subprojects(project_root)
-
-    lang_supports = detect_all_languages(
-        project_root,
-        extra_dirs=[project_root / sub for sub in subprojects],
-    )
-    if not lang_supports:
-        raise RuntimeError(
-            "Could not detect project language. "
-            "Supported: Python (pyproject.toml/setup.py), JavaScript (package.json), Go (go.mod)"
+        lang_supports = detect_all_languages(
+            project_root,
+            extra_dirs=[project_root / sub for sub in subprojects],
         )
+        if not lang_supports:
+            raise RuntimeError(
+                "Could not detect project language. "
+                "Supported: Python (pyproject.toml/setup.py), JavaScript (package.json), Go (go.mod)"
+            )
+
+        source_dirs = _guess_source_dirs(project_root, subprojects)
+        test_dirs = _discover_test_dirs(project_root, subprojects)
+        test_dir_info = _build_test_dir_info(test_dirs, project_root)
+
+        languages = [
+            LanguageConfig(language=ls.language, framework=ls.framework)
+            for ls in lang_supports
+        ]
+
+        config = ProjectConfig(
+            languages=languages,
+            test_dirs=test_dirs,
+            test_dir_info=test_dir_info,
+            source_dirs=source_dirs,
+            project_root=".",
+        )
+
+        # Collect files from all language supports
+        source_files: list[Path] = []
+        test_files: list[Path] = []
+        test_files_by_language: dict[str, list[Path]] = {}
+        seen_sources: set[Path] = set()
+        seen_tests: set[Path] = set()
+
+        for ls in lang_supports:
+            lang_test_files: list[Path] = []
+            for f in ls.find_source_files(project_root, source_dirs):
+                if f not in seen_sources:
+                    seen_sources.add(f)
+                    source_files.append(f)
+            for f in ls.find_test_files(project_root, test_dirs):
+                if f not in seen_tests:
+                    seen_tests.add(f)
+                    test_files.append(f)
+                lang_test_files.append(f)
+            if lang_test_files:
+                test_files_by_language[ls.language.value] = lang_test_files
 
     for ls in lang_supports:
         console.print(f"  Detected language: [green]{ls.language.value}[/green] ({ls.framework.value})")
-    source_dirs = _guess_source_dirs(project_root, subprojects)
-    test_dirs = _discover_test_dirs(project_root, subprojects)
-    test_dir_info = _build_test_dir_info(test_dirs, project_root)
-
-    languages = [
-        LanguageConfig(language=ls.language, framework=ls.framework)
-        for ls in lang_supports
-    ]
-
-    config = ProjectConfig(
-        languages=languages,
-        test_dirs=test_dirs,
-        test_dir_info=test_dir_info,
-        source_dirs=source_dirs,
-        project_root=str(project_root),
-    )
-
-    # Collect files from all language supports
-    source_files: list[Path] = []
-    test_files: list[Path] = []
-    test_files_by_language: dict[str, list[Path]] = {}
-    seen_sources: set[Path] = set()
-    seen_tests: set[Path] = set()
-
-    for ls in lang_supports:
-        lang_test_files: list[Path] = []
-        for f in ls.find_source_files(project_root, source_dirs):
-            if f not in seen_sources:
-                seen_sources.add(f)
-                source_files.append(f)
-        for f in ls.find_test_files(project_root, test_dirs):
-            if f not in seen_tests:
-                seen_tests.add(f)
-                test_files.append(f)
-            lang_test_files.append(f)
-        if lang_test_files:
-            test_files_by_language[ls.language.value] = lang_test_files
-
     console.print(f"  Source dirs: {source_dirs}")
     console.print(f"  Test dirs: {test_dirs}")
     console.print(f"  Source files found: [cyan]{len(source_files)}[/cyan]")
