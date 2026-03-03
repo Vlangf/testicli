@@ -7,7 +7,7 @@ import yaml
 from pydantic import BaseModel
 
 from testicli.config import get_agent_dir
-from testicli.models import ProjectConfig, TestFailure, TestPlan, TestRule
+from testicli.models import ProjectConfig, TestFailure, TestPlan, TestRule, TestType
 
 
 def _dump_yaml(path: Path, data: dict | list) -> None:
@@ -70,7 +70,7 @@ class Store:
 
     def _plan_filename(self, plan: TestPlan) -> str:
         lang_part = f"_{plan.language}" if plan.language else ""
-        return f"plan_{plan.created_at:%Y%m%d_%H%M%S}_{plan.test_type.value}{lang_part}.yaml"
+        return f"plan_{plan.test_type.value}{lang_part}.yaml"
 
     def save_plan(self, plan: TestPlan) -> None:
         path = self.plans_dir / self._plan_filename(plan)
@@ -89,6 +89,14 @@ class Store:
     def load_latest_plan(self) -> TestPlan | None:
         plans = self.load_plans()
         return plans[-1] if plans else None
+
+    def find_plan(self, test_type: TestType, language: str | None = None) -> TestPlan | None:
+        lang_part = f"_{language}" if language else ""
+        path = self.plans_dir / f"plan_{test_type.value}{lang_part}.yaml"
+        data = _load_yaml(path)
+        if data is None:
+            return None
+        return TestPlan.model_validate(data)
 
     def update_plan(self, plan: TestPlan) -> None:
         """Overwrite the plan file matching this plan's timestamp and type."""

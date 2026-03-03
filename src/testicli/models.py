@@ -23,10 +23,16 @@ class TestFramework(str, Enum):
 
 
 class TestType(str, Enum):
+    UNIT = "unit"
     INTEGRATION = "integration"
     E2E = "e2e"
     FUZZING = "fuzzing"
     SECURITY = "security"
+
+
+class TestDirInfo(BaseModel):
+    path: str
+    test_types: list["TestType"] = Field(default_factory=list)
 
 
 class TestStatus(str, Enum):
@@ -64,6 +70,7 @@ class LanguageConfig(BaseModel):
 class ProjectConfig(BaseModel):
     languages: list[LanguageConfig] = Field(default_factory=list)
     test_dirs: list[str] = Field(default_factory=lambda: ["tests"])
+    test_dir_info: list[TestDirInfo] = Field(default_factory=list)
     source_dirs: list[str] = Field(default_factory=lambda: ["src"])
     project_root: str = "."
 

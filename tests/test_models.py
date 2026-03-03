@@ -7,6 +7,7 @@ from testicli.models import (
     LanguageConfig,
     PlannedTest,
     ProjectConfig,
+    TestDirInfo,
     TestFailure,
     TestFramework,
     TestPlan,
@@ -153,6 +154,43 @@ def test_test_failure():
 def test_test_run_result():
     result = TestRunResult(success=True, output="OK", return_code=0, test_file="test.py")
     assert result.success is True
+
+
+def test_test_type_unit_exists():
+    assert TestType.UNIT.value == "unit"
+    # UNIT should be the first member
+    assert list(TestType)[0] == TestType.UNIT
+
+
+def test_test_dir_info():
+    info = TestDirInfo(path="tests", test_types=[TestType.UNIT, TestType.INTEGRATION])
+    assert info.path == "tests"
+    assert len(info.test_types) == 2
+    assert TestType.UNIT in info.test_types
+
+
+def test_test_dir_info_defaults():
+    info = TestDirInfo(path="tests")
+    assert info.test_types == []
+
+
+def test_test_dir_info_serialization():
+    info = TestDirInfo(path="e2e", test_types=[TestType.E2E])
+    data = info.model_dump()
+    restored = TestDirInfo.model_validate(data)
+    assert restored == info
+
+
+def test_project_config_test_dir_info():
+    config = ProjectConfig(
+        languages=[LanguageConfig(language=Language.PYTHON, framework=TestFramework.PYTEST)],
+        test_dir_info=[
+            TestDirInfo(path="tests", test_types=[TestType.UNIT]),
+            TestDirInfo(path="e2e", test_types=[TestType.E2E]),
+        ],
+    )
+    assert len(config.test_dir_info) == 2
+    assert config.test_dir_info[0].path == "tests"
 
 
 def test_model_serialization_roundtrip():

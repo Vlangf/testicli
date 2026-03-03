@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from claude_agent_sdk import (
+    CLIConnectionError,
     ClaudeAgentOptions,
     AssistantMessage,
     SdkMcpTool,
@@ -19,6 +20,11 @@ from rich.console import Console
 from testicli.config import Settings
 
 console = Console()
+
+
+def _is_transport_cleanup_error(eg: BaseExceptionGroup) -> bool:
+    """Check if all exceptions in the group are CLIConnectionError (transport cleanup)."""
+    return all(isinstance(exc, CLIConnectionError) for exc in eg.exceptions)
 
 
 class LLMClient:
@@ -87,11 +93,15 @@ class LLMClient:
             max_turns=max_turns,
         )
         parts: list[str] = []
-        async for message in query(prompt=prompt, options=options):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        parts.append(block.text)
+        try:
+            async for message in query(prompt=prompt, options=options):
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            parts.append(block.text)
+        except BaseExceptionGroup as eg:
+            if not _is_transport_cleanup_error(eg):
+                raise
         return "\n".join(parts)
 
     async def _query_text(self, system: str, prompt: str) -> str:
@@ -102,11 +112,15 @@ class LLMClient:
             max_turns=1,
         )
         parts: list[str] = []
-        async for message in query(prompt=prompt, options=options):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        parts.append(block.text)
+        try:
+            async for message in query(prompt=prompt, options=options):
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            parts.append(block.text)
+        except BaseExceptionGroup as eg:
+            if not _is_transport_cleanup_error(eg):
+                raise
         return "\n".join(parts)
 
     async def _query_structured(

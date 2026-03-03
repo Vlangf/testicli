@@ -5,8 +5,17 @@ from pathlib import Path
 from testicli.languages.base import register_language
 from testicli.languages.javascript import JavaScriptSupport
 from testicli.languages.python import PythonSupport
-from testicli.core.scanner import scan_project, _find_subprojects, _guess_source_dirs, _guess_test_dirs
-from testicli.models import Language
+from testicli.core.scanner import (
+    scan_project,
+    _find_subprojects,
+    _guess_source_dirs,
+    _guess_test_dirs_by_name,
+    _discover_test_dirs,
+    _classify_test_file,
+    _classify_test_dir,
+    _build_test_dir_info,
+)
+from testicli.models import Language, TestType
 
 # Ensure languages are registered
 register_language(PythonSupport())
@@ -58,10 +67,20 @@ def test_scan_no_language_detected(tmp_path: Path):
 
 
 def test_scan_guesses_test_dirs(tmp_path: Path):
+    """Name-based fallback works when no test files exist."""
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
     (tmp_path / "test").mkdir()
     result = scan_project(tmp_path)
     assert result.config.test_dirs == ["test"]
+
+
+def test_name_based_fallback(tmp_path: Path):
+    """_guess_test_dirs_by_name finds conventional directories."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "spec").mkdir()
+    result = _guess_test_dirs_by_name(tmp_path, [])
+    assert "tests" in result
+    assert "spec" in result
 
 
 def test_find_subprojects(tmp_path: Path):
@@ -204,3 +223,93 @@ def test_test_files_by_language_monorepo(tmp_path: Path):
     # No cross-contamination
     assert "index.test.js" not in py_names
     assert "test_main.py" not in js_names
+
+
+# --- Content-based discovery tests ---
+
+
+def test_content_based_finds_nonstandard_dir(tmp_path: Path):
+    """Content-based discovery finds test files in non-standard directories."""
+    checks = tmp_path / "checks"
+    checks.mkdir()
+    (checks / "test_validation.py").write_text("def test_ok(): pass\n")
+
+    result = _discover_test_dirs(tmp_path, [])
+    assert "checks" in result
+
+
+def test_content_based_collapses_to_shallowest(tmp_path: Path):
+    """Nested test dirs collapse to shallowest ancestor."""
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_root.py").write_text("def test_root(): pass\n")
+    unit = tests / "unit"
+    unit.mkdir()
+    (unit / "test_unit.py").write_text("def test_unit(): pass\n")
+
+    result = _discover_test_dirs(tmp_path, [])
+    assert result == ["tests"]
+
+
+def test_empty_project_falls_back(tmp_path: Path):
+    """Empty project with conventional dir uses name-based fallback."""
+    (tmp_path / "tests").mkdir()
+    # No test files inside — fallback to name-based
+    result = _discover_test_dirs(tmp_path, [])
+    assert result == ["tests"]
+
+
+# --- Type detection tests ---
+
+
+def test_type_detection_by_imports(tmp_path: Path):
+    """Files with specific imports are classified correctly."""
+    tests = tmp_path / "tests"
+    tests.mkdir()
+
+    fuzz_file = tests / "test_fuzz.py"
+    fuzz_file.write_text("from hypothesis import given\n\ndef test_fuzz(): pass\n")
+
+    e2e_file = tests / "test_e2e.py"
+    e2e_file.write_text("from playwright.sync_api import sync_playwright\n\ndef test_e2e(): pass\n")
+
+    assert TestType.FUZZING in _classify_test_file(fuzz_file)
+    assert TestType.E2E in _classify_test_file(e2e_file)
+
+
+def test_type_detection_by_markers(tmp_path: Path):
+    """Pytest markers are detected for classification."""
+    tests = tmp_path / "tests"
+    tests.mkdir()
+
+    integ_file = tests / "test_integ.py"
+    integ_file.write_text(
+        "import pytest\n\n@pytest.mark.integration\ndef test_api(): pass\n"
+    )
+
+    result = _classify_test_file(integ_file)
+    assert TestType.INTEGRATION in result
+
+
+def test_type_detection_default_unit(tmp_path: Path):
+    """Plain test files with no special imports default to UNIT."""
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_basic.py").write_text("def test_add(): assert 1 + 1 == 2\n")
+
+    result = _classify_test_dir("tests", tmp_path)
+    assert result == [TestType.UNIT]
+
+
+def test_type_detection_mixed_dir(tmp_path: Path):
+    """Directory with mixed test types returns all detected types."""
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_unit.py").write_text("def test_add(): assert 1 + 1 == 2\n")
+    (tests / "test_integ.py").write_text(
+        "from fastapi.testclient import TestClient\n\ndef test_api(): pass\n"
+    )
+
+    result = _classify_test_dir("tests", tmp_path)
+    assert TestType.UNIT in result
+    assert TestType.INTEGRATION in result

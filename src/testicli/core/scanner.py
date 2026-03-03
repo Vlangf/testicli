@@ -1,13 +1,16 @@
 """Scan project: detect language, find tests, collect source files."""
 
 
+import fnmatch
+import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from rich.console import Console
 
 from testicli.languages.base import detect_all_languages, LanguageSupport
-from testicli.models import LanguageConfig, ProjectConfig
+from testicli.models import LanguageConfig, ProjectConfig, TestDirInfo, TestType
 
 console = Console()
 
@@ -18,6 +21,51 @@ _SKIP_DIRS = {
 }
 
 _SUBPROJECT_MARKERS = {"pyproject.toml", "package.json", "go.mod"}
+
+_TEST_FILE_PATTERNS = [
+    "test_*.py", "*_test.py",                                # Python
+    "*.test.js", "*.spec.js", "*.test.ts", "*.spec.ts",     # JS/TS
+    "*.test.jsx", "*.spec.jsx", "*.test.tsx", "*.spec.tsx",
+    "*_test.go",                                              # Go
+]
+
+# Content-based classification patterns: (regex, TestType)
+_CONTENT_PATTERNS: list[tuple[str, TestType]] = [
+    # Fuzzing
+    (r"from hypothesis|import hypothesis", TestType.FUZZING),
+    (r"@given\(", TestType.FUZZING),
+    (r"import atheris", TestType.FUZZING),
+    # E2E
+    (r"from selenium|import selenium", TestType.E2E),
+    (r"from playwright|import playwright", TestType.E2E),
+    (r"import puppeteer|from puppeteer", TestType.E2E),
+    (r"cy\.(visit|get|contains)", TestType.E2E),
+    (r"@playwright/test", TestType.E2E),
+    # Integration
+    (r"import supertest|from supertest", TestType.INTEGRATION),
+    (r"from fastapi\.testclient|TestClient", TestType.INTEGRATION),
+    (r"import httpx|from httpx", TestType.INTEGRATION),
+    (r"import requests|from requests", TestType.INTEGRATION),
+    (r"testcontainers|import docker", TestType.INTEGRATION),
+    (r"net/http/httptest", TestType.INTEGRATION),
+    # Security
+    (r"import bandit|import safety", TestType.SECURITY),
+    (r"DROP TABLE|UNION SELECT|<script>", TestType.SECURITY),
+    # Pytest markers
+    (r"@pytest\.mark\.integration", TestType.INTEGRATION),
+    (r"@pytest\.mark\.e2e", TestType.E2E),
+    (r"@pytest\.mark\.security", TestType.SECURITY),
+]
+
+# Path segment -> TestType mapping for fallback classification
+_PATH_SEGMENT_TYPES: dict[str, TestType] = {
+    "unit": TestType.UNIT,
+    "integration": TestType.INTEGRATION,
+    "e2e": TestType.E2E,
+    "fuzzing": TestType.FUZZING,
+    "fuzz": TestType.FUZZING,
+    "security": TestType.SECURITY,
+}
 
 
 @dataclass
@@ -93,8 +141,8 @@ def _guess_source_dirs(project_root: Path, subprojects: list[Path]) -> list[str]
     return ["src"]
 
 
-def _guess_test_dirs(project_root: Path, subprojects: list[Path]) -> list[str]:
-    """Guess test directories, including in subprojects."""
+def _guess_test_dirs_by_name(project_root: Path, subprojects: list[Path]) -> list[str]:
+    """Guess test directories by conventional names (fallback)."""
     candidates = ["tests", "test", "spec"]
     found: list[str] = []
 
@@ -111,6 +159,117 @@ def _guess_test_dirs(project_root: Path, subprojects: list[Path]) -> list[str]:
                 found.append(str(sub / d))
 
     return found or ["tests"]
+
+
+def _is_test_file(filename: str) -> bool:
+    """Check if a filename matches any test file pattern."""
+    return any(fnmatch.fnmatch(filename, pat) for pat in _TEST_FILE_PATTERNS)
+
+
+def _discover_test_dirs(project_root: Path, subprojects: list[Path]) -> list[str]:
+    """Discover test directories by scanning for actual test files.
+
+    Walks the file system looking for directories containing test files,
+    then collapses to shallowest ancestors. Falls back to name-based
+    discovery if no test files are found.
+    """
+    dirs_with_tests: set[str] = set()
+
+    for dirpath, dirnames, filenames in os.walk(project_root):
+        # Skip hidden dirs and known non-project dirs
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in _SKIP_DIRS and not d.startswith(".")
+        ]
+
+        # Check direct children for test file patterns
+        if any(_is_test_file(f) for f in filenames):
+            rel = os.path.relpath(dirpath, project_root)
+            if rel == ".":
+                continue  # skip project root itself
+            dirs_with_tests.add(rel)
+
+    if not dirs_with_tests:
+        return _guess_test_dirs_by_name(project_root, subprojects)
+
+    # Collapse to shallowest ancestors
+    sorted_dirs = sorted(dirs_with_tests, key=lambda d: d.count(os.sep))
+    result: list[str] = []
+    for d in sorted_dirs:
+        # Keep only if no existing result is a parent of this dir
+        if not any(d.startswith(parent + os.sep) for parent in result):
+            result.append(d)
+
+    return result
+
+
+def _classify_test_file(path: Path) -> set[TestType]:
+    """Classify a single test file by analyzing its content.
+
+    Returns at least {UNIT} if no specific signals are found.
+    """
+    try:
+        content = path.read_text(errors="ignore")
+    except OSError:
+        return {TestType.UNIT}
+
+    found: set[TestType] = set()
+    for pattern, test_type in _CONTENT_PATTERNS:
+        if re.search(pattern, content):
+            found.add(test_type)
+
+    if found:
+        return found
+
+    # Fallback: classify by path segments
+    parts = path.parts
+    for part in parts:
+        part_lower = part.lower()
+        if part_lower in _PATH_SEGMENT_TYPES:
+            found.add(_PATH_SEGMENT_TYPES[part_lower])
+
+    # Default to UNIT if nothing detected
+    return found or {TestType.UNIT}
+
+
+def _classify_test_dir(dir_path: str, project_root: Path) -> list[TestType]:
+    """Classify all test files in a directory and return union of types."""
+    abs_dir = project_root / dir_path
+    found: set[TestType] = set()
+
+    for dirpath, dirnames, filenames in os.walk(abs_dir):
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in _SKIP_DIRS and not d.startswith(".")
+        ]
+        for filename in filenames:
+            if _is_test_file(filename):
+                file_path = Path(dirpath) / filename
+                found |= _classify_test_file(file_path)
+
+    if found:
+        return sorted(found, key=lambda t: list(TestType).index(t))
+
+    # Fallback: classify by directory name segments
+    for part in Path(dir_path).parts:
+        part_lower = part.lower()
+        if part_lower in _PATH_SEGMENT_TYPES:
+            found.add(_PATH_SEGMENT_TYPES[part_lower])
+
+    if found:
+        return sorted(found, key=lambda t: list(TestType).index(t))
+
+    return [TestType.UNIT]
+
+
+def _build_test_dir_info(
+    test_dirs: list[str], project_root: Path,
+) -> list[TestDirInfo]:
+    """Build TestDirInfo list by combining discovery and classification."""
+    return [
+        TestDirInfo(path=d, test_types=_classify_test_dir(d, project_root))
+        for d in test_dirs
+    ]
 
 
 def scan_project(project_root: Path) -> ScanResult:
@@ -132,7 +291,8 @@ def scan_project(project_root: Path) -> ScanResult:
     for ls in lang_supports:
         console.print(f"  Detected language: [green]{ls.language.value}[/green] ({ls.framework.value})")
     source_dirs = _guess_source_dirs(project_root, subprojects)
-    test_dirs = _guess_test_dirs(project_root, subprojects)
+    test_dirs = _discover_test_dirs(project_root, subprojects)
+    test_dir_info = _build_test_dir_info(test_dirs, project_root)
 
     languages = [
         LanguageConfig(language=ls.language, framework=ls.framework)
@@ -142,6 +302,7 @@ def scan_project(project_root: Path) -> ScanResult:
     config = ProjectConfig(
         languages=languages,
         test_dirs=test_dirs,
+        test_dir_info=test_dir_info,
         source_dirs=source_dirs,
         project_root=str(project_root),
     )

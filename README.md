@@ -1,20 +1,23 @@
 # testicli
 
-AI test agent powered by Claude — scans your project, learns conventions from existing tests, generates integration/e2e/fuzzing/security tests, runs them, and auto-fixes failures. Supports Python, JavaScript, and Go.
+AI-powered test generator built on Claude. Scans your project, learns conventions from existing tests, generates unit/integration/e2e/fuzzing/security tests, runs them, and auto-fixes failures. Supports Python, JavaScript/TypeScript, and Go, including monorepos.
 
 ## Features
 
-- **Auto-detection** — detects language (Python, JavaScript, Go), framework (pytest, jest, vitest, go test), project structure
-- **Learns from your code** — analyzes existing tests, extracts naming conventions, assertion styles, mocking patterns
-- **Multiple test types** — integration, e2e, fuzzing (property-based), security
-- **Self-healing** — runs generated tests, auto-fixes failures, retries
-- **Failure analysis** — analyzes recurring failures, suggests improvements to test rules
+- **Interactive TUI** — run `testicli` with no arguments for a menu-driven experience with arrow-key navigation
+- **Auto-detection** — detects languages, frameworks, source/test directories, and monorepo subprojects
+- **Learns from your code** — analyzes existing tests, extracts naming conventions, assertion styles, mocking patterns as reusable rules
+- **5 test types** — unit, integration, e2e, fuzzing (property-based), security (OWASP Top 10)
+- **Self-healing** — runs generated tests, auto-fixes failures via Claude, retries
+- **Quality gates** — static analysis + optional LLM review, auto-fix for weak tests
+- **Failure analysis** — analyzes recurring failures, auto-updates test-writing rules
+- **Monorepo support** — per-language configs, per-language rules, separate plans per type/language combo
 
 ## Requirements
 
 - Python 3.14+
-- [uv](https://docs.astral.sh/uv/) (recommended) or pip
-- Anthropic API key
+- [uv](https://docs.astral.sh/uv/)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI installed and authenticated (`claude login`)
 
 ## Installation
 
@@ -24,174 +27,153 @@ cd testicli
 uv sync
 ```
 
-Or install as a tool:
-
-```bash
-uv tool install .
-```
-
 ## Configuration
-
-Set your Anthropic API key:
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-```
 
 Optional environment variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | — | Required. Your Anthropic API key |
-| `TEST_AGENT_MODEL` | `claude-sonnet-4-20250514` | Claude model to use |
+| `TEST_AGENT_MODEL` | `claude-sonnet-4-6` | Claude model for generation |
 | `TEST_AGENT_MAX_FIX_ATTEMPTS` | `2` | Max attempts to fix a failing test |
+
+## Quick start
+
+```bash
+# Interactive mode — the easiest way to use testicli
+uv run testicli
+
+# Or use subcommands directly
+uv run testicli init .
+uv run testicli plan -t unit,integration
+uv run testicli write
+uv run testicli review --fix
+uv run testicli status
+```
 
 ## Usage
 
-### 1. Initialize on your project
+### Interactive mode
+
+Run `testicli` with no arguments to launch the interactive TUI:
+
+```
+$ uv run testicli
+
+testicli -- AI-powered test generator
+
+? What would you like to do?
+> Plan tests
+  Write tests
+  Review tests
+  Show status
+  Analyze failures
+  Initialize project (re-scan)
+  Exit
+```
+
+The TUI guides you through every step: picking test types, selecting plans to update, choosing languages in monorepos, and configuring review options — all with arrow keys.
+
+### CLI subcommands
+
+#### `init` — Scan and initialize
 
 ```bash
-uv run testicli init /path/to/your/project
+uv run testicli init /path/to/project
 ```
 
-This will:
-- Detect the language and test framework
-- Find source files and existing tests
-- Analyze existing tests to extract conventions and rules
-- Create `.testicli/` directory with `config.yaml` and `rules.yaml`
+Detects languages, frameworks, source/test directories, and existing test conventions. Creates `.testicli/` with `config.yaml` and `rules.yaml`.
 
-Example output:
-```
-Scanning project at /path/to/your/project...
-  Detected language: python
-  Framework: pytest
-  Source dirs: ['src']
-  Test dir: tests
-  Source files found: 12
-  Test files found: 5
-  Analyzing 5 test files...
-  Extracted 8 rules
-Saved config.yaml
-Saved rules.yaml
-
-Initialized .testicli/ in /path/to/your/project
-```
-
-### 2. Create a test plan
+#### `plan` — Create test plans
 
 ```bash
-# Single type
-uv run testicli plan -t integration /path/to/your/project
-
-# Multiple types
-uv run testicli plan -t integration,e2e,security /path/to/your/project
+uv run testicli plan -t unit                          # single type
+uv run testicli plan -t integration,e2e,security      # multiple types
 ```
 
-Available test types: `integration`, `e2e`, `fuzzing`, `security`
+Available types: `unit`, `integration`, `e2e`, `fuzzing`, `security`
 
-This sends your source code and extracted rules to Claude, which creates a list of planned tests. Plans are saved to `.testicli/plans/`.
+Sends source code and extracted rules to Claude, which generates a list of planned tests per type/language combo. Running `plan` again for the same type updates the existing plan (merges new tests).
 
-### 3. Write tests
+#### `write` — Generate test code
 
 ```bash
-# Write tests from the latest plan
-uv run testicli write /path/to/your/project
-
-# Write tests from a specific plan
-uv run testicli write --plan 20260301 /path/to/your/project
+uv run testicli write                        # write from latest plan
+uv run testicli write --plan integration     # write from specific plan
 ```
 
-For each planned test, the tool:
-1. Generates test code via Claude API
-2. Writes the code to the output file
-3. Runs the test
-4. If it fails — sends the error back to Claude for a fix, rewrites, reruns
-5. If it fails again — saves the failure to `.testicli/failures/`, moves on
-6. Updates the plan status (passed/failed)
+For each pending test: generates code via Claude agent, writes to disk, runs the test. If it fails — sends the error back to Claude for a fix and retries. Persistent failures are recorded for later analysis.
 
-### 4. Review test quality
+#### `review` — Quality validation
 
 ```bash
-# Static analysis only (free, no API calls)
-uv run testicli review /path/to/your/project
-
-# With LLM-based deep review
-uv run testicli review --llm-review /path/to/your/project
-
-# Auto-fix weak tests
-uv run testicli review --fix /path/to/your/project
-
-# Review a specific plan
-uv run testicli review --plan 20260301 /path/to/your/project
+uv run testicli review                       # static analysis only
+uv run testicli review --llm-review          # + LLM-based deep review
+uv run testicli review --fix                 # auto-fix weak tests
+uv run testicli review --plan unit           # review specific plan
 ```
 
-Checks passed tests for quality issues:
-- **Static analysis** (always) — detects empty bodies (`pass`), missing assertions, trivial assertions (`assert True`), swallowed errors (`except: pass`)
-- **LLM review** (with `--llm-review`) — deeper analysis of test meaningfulness, edge case coverage, correct mocking
+Static checks detect empty bodies, missing assertions, trivial assertions (`assert True`), and swallowed errors. LLM review adds semantic analysis. `--fix` attempts auto-repair (reverts if the fix breaks the test).
 
-Tests with critical issues are marked as `WEAK` in the plan. Use `--fix` to attempt automatic repair via LLM (reverts if the fix breaks the test).
-
-### 5. Analyze failures
+#### `analyze` — Learn from failures
 
 ```bash
-# View suggestions
-uv run testicli analyze /path/to/your/project
-
-# Auto-update rules based on failure analysis
-uv run testicli analyze --update-rules /path/to/your/project
+uv run testicli analyze                      # view suggestions
+uv run testicli analyze --update-rules       # auto-update rules
 ```
 
-Analyzes recorded failures, identifies patterns, and suggests improvements to your test-writing rules.
+Analyzes recorded failures, identifies patterns, and suggests (or applies) improvements to test-writing rules.
 
-### 6. Check status
+#### `status` — Overview
 
 ```bash
-uv run testicli status /path/to/your/project
+uv run testicli status
 ```
 
-Shows an overview: project config, number of rules, plans with pass/fail/weak/pending counts, and recorded failures.
+Shows project config, rule count, plans with pass/fail/weak/pending counts, and recorded failures.
 
-## .testicli/ directory structure
+## `.testicli/` directory
 
 Created in the target project after `init`:
 
 ```
 .testicli/
-├── config.yaml              # Detected language, framework, source/test dirs
-├── rules.yaml               # Extracted test writing conventions
+├── config.yaml                          # Language, framework, source/test dirs
+├── rules.yaml                           # Extracted test conventions
 ├── plans/
-│   └── plan_<date>_<type>.yaml   # Generated test plans
+│   ├── plan_unit_python.yaml            # One file per type/language combo
+│   ├── plan_integration_python.yaml
+│   └── plan_e2e_javascript.yaml
 └── failures/
-    └── fail_<timestamp>_<name>.yaml  # Recorded test failures
+    └── fail_<timestamp>_<name>.yaml     # Recorded test failures
 ```
 
-You should commit `config.yaml` and `rules.yaml` to version control. Plans and failures are ephemeral.
+Commit `config.yaml` and `rules.yaml` to version control. Plans and failures are ephemeral.
 
 ## Supported languages
 
-| Language | Framework | Detection |
+| Language | Frameworks | Detected via |
 |---|---|---|
-| Python | pytest | `pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt` |
-| JavaScript/TypeScript | jest, vitest | `package.json` |
+| Python | pytest, unittest | `pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt` |
+| JavaScript/TypeScript | Jest, Vitest | `package.json` |
 | Go | go test | `go.mod` |
 
-## Adding a new language
+## Extending
+
+### Add a language
 
 1. Create `src/testicli/languages/your_lang.py` implementing the `LanguageSupport` protocol
-2. Register it in `src/testicli/cli.py`:
+2. Register in `src/testicli/cli.py`:
 
 ```python
 from testicli.languages.your_lang import YourLangSupport
 register_language(YourLangSupport())
 ```
 
-Required methods: `detect()`, `find_source_files()`, `find_test_files()`, `test_command()`, `test_file_path()`, `parse_test_output()`.
+### Add a test type
 
-## Adding a new test type
-
-1. Create `src/testicli/test_types/your_type.py` implementing the `TestTypeStrategy` protocol
+1. Create `src/testicli/test_types/your_type.py` implementing `TestTypeStrategy`
 2. Add the type to the `TestType` enum in `models.py`
-3. Register it in `src/testicli/cli.py`:
+3. Register in `src/testicli/cli.py`:
 
 ```python
 from testicli.test_types.your_type import YourTypeStrategy
@@ -201,13 +183,8 @@ register_test_type(YourTypeStrategy())
 ## Development
 
 ```bash
-# Install with dev dependencies
 uv sync
-
-# Run tests
 uv run pytest tests/ -v
-
-# Run the CLI locally
 uv run testicli --help
 ```
 

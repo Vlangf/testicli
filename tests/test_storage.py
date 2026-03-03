@@ -134,24 +134,19 @@ def test_save_and_load_plan_with_language(tmp_path: Path):
 
 def test_save_multiple_language_plans(tmp_path: Path):
     """Plans for different languages should not overwrite each other."""
-    from datetime import datetime
-
     ensure_agent_dir(tmp_path)
     store = Store(tmp_path)
 
-    now = datetime.now()
     py_plan = TestPlan(
         name="python_security_plan",
         test_type=TestType.SECURITY,
         language="python",
-        created_at=now,
         tests=[],
     )
     js_plan = TestPlan(
         name="javascript_security_plan",
         test_type=TestType.SECURITY,
         language="javascript",
-        created_at=now,
         tests=[],
     )
     store.save_plan(py_plan)
@@ -171,6 +166,97 @@ def test_load_latest_plan(tmp_path: Path):
     plan = TestPlan(name="p1", test_type=TestType.E2E, tests=[])
     store.save_plan(plan)
     assert store.load_latest_plan() is not None
+
+
+def test_save_same_plan_twice_overwrites(tmp_path: Path):
+    """Saving the same (type, language) plan twice should produce one file, not two."""
+    ensure_agent_dir(tmp_path)
+    store = Store(tmp_path)
+
+    plan_v1 = TestPlan(
+        name="python_unit_plan",
+        test_type=TestType.UNIT,
+        language="python",
+        tests=[
+            PlannedTest(
+                id="t1",
+                name="test_first",
+                description="First test",
+                test_type=TestType.UNIT,
+                target_file="src/a.py",
+                output_file="tests/test_a.py",
+            ),
+        ],
+    )
+    store.save_plan(plan_v1)
+
+    plan_v2 = TestPlan(
+        name="python_unit_plan",
+        test_type=TestType.UNIT,
+        language="python",
+        tests=[
+            PlannedTest(
+                id="t1",
+                name="test_first",
+                description="First test",
+                test_type=TestType.UNIT,
+                target_file="src/a.py",
+                output_file="tests/test_a.py",
+            ),
+            PlannedTest(
+                id="t2",
+                name="test_second",
+                description="Second test",
+                test_type=TestType.UNIT,
+                target_file="src/b.py",
+                output_file="tests/test_b.py",
+            ),
+        ],
+    )
+    store.save_plan(plan_v2)
+
+    # Should be one file, not two
+    plan_files = list(store.plans_dir.glob("plan_*.yaml"))
+    assert len(plan_files) == 1
+
+    plans = store.load_plans()
+    assert len(plans) == 1
+    assert len(plans[0].tests) == 2
+
+
+def test_find_plan(tmp_path: Path):
+    """find_plan should load an existing plan by (test_type, language)."""
+    ensure_agent_dir(tmp_path)
+    store = Store(tmp_path)
+
+    assert store.find_plan(TestType.UNIT, "python") is None
+
+    plan = TestPlan(
+        name="python_unit_plan",
+        test_type=TestType.UNIT,
+        language="python",
+        tests=[
+            PlannedTest(
+                id="t1",
+                name="test_something",
+                description="Test it",
+                test_type=TestType.UNIT,
+                target_file="src/app.py",
+                output_file="tests/test_app.py",
+            ),
+        ],
+    )
+    store.save_plan(plan)
+
+    found = store.find_plan(TestType.UNIT, "python")
+    assert found is not None
+    assert found.name == "python_unit_plan"
+    assert len(found.tests) == 1
+
+    # Different type should not match
+    assert store.find_plan(TestType.INTEGRATION, "python") is None
+    # Different language should not match
+    assert store.find_plan(TestType.UNIT, "javascript") is None
 
 
 def test_save_and_load_failure(tmp_path: Path):

@@ -63,6 +63,7 @@ PLAN_TESTS_PROMPT = """\
 Project language: {language}
 Test framework: {framework}
 Test type to generate: {test_type}
+Test output directory: {test_dir}
 
 {type_specific_context}
 
@@ -71,13 +72,13 @@ Existing test rules/conventions:
 
 Source files to test:
 {source_files_content}
-
+{already_covered_section}
 Create a test plan. For each planned test, provide:
 - id: a unique identifier (e.g., "test_001")
 - name: descriptive test name
 - description: what the test verifies
 - target_file: the source file being tested
-- output_file: where to write the test (follow project conventions)
+- output_file: where to write the test (must be inside the test output directory above)
 """
 
 PLAN_TESTS_TOOL_SCHEMA = {

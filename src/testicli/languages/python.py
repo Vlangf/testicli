@@ -30,10 +30,11 @@ class PythonSupport:
                 if py_file.name.startswith("test_") or py_file.name.endswith("_test.py"):
                     continue
                 files.append(py_file)
-        # Also check root-level .py files
-        for py_file in project_root.glob("*.py"):
-            if not py_file.name.startswith("test_"):
-                files.append(py_file)
+        # Also check root-level .py files when "." is a source dir
+        if "." in source_dirs:
+            for py_file in project_root.glob("*.py"):
+                if not py_file.name.startswith("test_"):
+                    files.append(py_file)
         return sorted(files)
 
     def find_test_files(self, project_root: Path, test_dirs: list[str]) -> list[Path]:
