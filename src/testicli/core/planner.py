@@ -15,6 +15,7 @@ from testicli.models import (
     LanguageConfig,
     PlannedTest,
     ProjectConfig,
+    TestDirInfo,
     TestPlan,
     TestRule,
     TestType,
@@ -27,8 +28,21 @@ MAX_FILE_SIZE = 30_000
 MAX_TOTAL_CONTENT = 150_000
 
 
-def _match_test_dir(source_dir: str, test_dirs: list[str]) -> str:
+def _match_test_dir(
+    source_dir: str,
+    test_dirs: list[str],
+    test_type: TestType | None = None,
+    test_dir_info: list[TestDirInfo] | None = None,
+) -> str:
     """Find the test dir sharing the longest common path prefix with source_dir."""
+    if test_type and test_dir_info:
+        type_matched = [
+            info.path for info in test_dir_info
+            if test_type in info.test_types
+        ]
+        if type_matched:
+            test_dirs = type_matched
+
     source_parts = Path(source_dir).parts
     best_match = test_dirs[0]
     best_score = 0
@@ -56,6 +70,7 @@ def _plan_source_dir(
     rules: list[TestRule],
     test_type: TestType,
     already_planned: set[str] | None = None,
+    existing_test_files: list[str] | None = None,
 ) -> list[PlannedTest]:
     """Plan tests for a single source directory."""
     if already_planned is None:
@@ -111,6 +126,16 @@ def _plan_source_dir(
     else:
         already_covered_section = ""
 
+    # Build existing-tests section for prompt
+    if existing_test_files:
+        test_lines = "\n".join(f"- {f}" for f in sorted(existing_test_files))
+        existing_tests_section = (
+            f"\nExisting test files in the project (DO NOT create tests that duplicate these):\n"
+            f"{test_lines}\n"
+        )
+    else:
+        existing_tests_section = ""
+
     prompt = PLAN_TESTS_PROMPT.format(
         language=lang_config.language.value,
         framework=lang_config.framework.value,
@@ -120,6 +145,7 @@ def _plan_source_dir(
         rules=rules_text,
         source_files_content="\n\n".join(source_contents),
         already_covered_section=already_covered_section,
+        existing_tests_section=existing_tests_section,
     )
 
     result = llm.generate_structured(
@@ -169,6 +195,10 @@ def create_plan(
 
     lang = get_language_support(lang_config.language)
 
+    # Discover existing test files so the LLM avoids duplicating them
+    existing_test_files = lang.find_test_files(project_root, config.test_dirs)
+    existing_test_names = [str(f.relative_to(project_root)) for f in existing_test_files]
+
     # Collect already-planned target files from existing plan
     already_planned: set[str] = set()
     if existing_plan:
@@ -181,7 +211,7 @@ def create_plan(
         if not source_files:
             continue
 
-        test_dir = _match_test_dir(source_dir, config.test_dirs)
+        test_dir = _match_test_dir(source_dir, config.test_dirs, test_type, config.test_dir_info)
 
         tests = _plan_source_dir(
             llm=llm,
@@ -193,16 +223,29 @@ def create_plan(
             rules=rules,
             test_type=test_type,
             already_planned=already_planned,
+            existing_test_files=existing_test_names,
         )
+        # Track files from this iteration so the next iteration skips them
+        for t in tests:
+            already_planned.add(t.target_file)
         all_tests.extend(tests)
+
+    # Deduplicate by output_file (keep first occurrence)
+    seen_outputs: set[str] = set()
+    deduped: list[PlannedTest] = []
+    for t in all_tests:
+        if t.output_file not in seen_outputs:
+            seen_outputs.add(t.output_file)
+            deduped.append(t)
+    all_tests = deduped
+
+    # Always renumber IDs globally to ensure uniqueness
+    id_offset = len(existing_plan.tests) if existing_plan else 0
+    for i, t in enumerate(all_tests):
+        t.id = f"test_{id_offset + i + 1:03d}"
 
     # Merge with existing plan if present
     if existing_plan and all_tests:
-        # Re-number new test IDs to avoid collisions
-        id_offset = len(existing_plan.tests)
-        for i, t in enumerate(all_tests):
-            t.id = f"test_{id_offset + i + 1:03d}"
-
         merged_tests = list(existing_plan.tests) + all_tests
         plan = TestPlan(
             name=existing_plan.name,
