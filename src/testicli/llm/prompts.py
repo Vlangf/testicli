@@ -73,6 +73,7 @@ Existing test rules/conventions:
 Source files to test:
 {source_files_content}
 {already_covered_section}
+{existing_tests_section}
 Create a test plan. For each planned test, provide:
 - id: a unique identifier (e.g., "test_001")
 - name: descriptive test name

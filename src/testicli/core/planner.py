@@ -156,8 +156,27 @@ def _plan_source_dir(
         temperature=0.3,
     )
 
+    existing_set = set(existing_test_files) if existing_test_files else set()
+
     tests = []
     for t in result.get("tests", []):
+        output = t["output_file"]
+
+        # Normalize: ensure output_file is rooted under test_dir
+        if not output.startswith(test_dir + "/") and output != test_dir:
+            out_path = Path(output)
+            test_dir_name = Path(test_dir).name
+            parts = out_path.parts
+            try:
+                idx = parts.index(test_dir_name)
+                output = str(Path(test_dir) / Path(*parts[idx + 1 :]))
+            except ValueError:
+                output = str(Path(test_dir) / out_path.name)
+
+        # Skip tests that duplicate an existing file on disk
+        if output in existing_set:
+            continue
+
         tests.append(
             PlannedTest(
                 id=t["id"],
@@ -165,7 +184,7 @@ def _plan_source_dir(
                 description=t["description"],
                 test_type=test_type,
                 target_file=t["target_file"],
-                output_file=t["output_file"],
+                output_file=output,
             )
         )
     return tests
@@ -230,12 +249,16 @@ def create_plan(
             already_planned.add(t.target_file)
         all_tests.extend(tests)
 
-    # Deduplicate by output_file (keep first occurrence)
+    # Deduplicate by output_file and by (target_file, name) to catch
+    # internal duplicates where the same test appears with different paths
     seen_outputs: set[str] = set()
+    seen_targets: set[tuple[str, str]] = set()
     deduped: list[PlannedTest] = []
     for t in all_tests:
-        if t.output_file not in seen_outputs:
+        target_key = (t.target_file, t.name.lower().strip())
+        if t.output_file not in seen_outputs and target_key not in seen_targets:
             seen_outputs.add(t.output_file)
+            seen_targets.add(target_key)
             deduped.append(t)
     all_tests = deduped
 

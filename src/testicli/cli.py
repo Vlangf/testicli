@@ -142,8 +142,8 @@ def _run_write(
     """Write tests for a given plan."""
     from testicli.core.writer import write_tests
 
-    with cat_spinner(f"Writing tests from plan ({test_plan.test_type.value})..."):
-        write_tests(llm, config, rules, test_plan, store, project_root, settings)
+    console.print(f"[blue]Writing tests from plan ({test_plan.test_type.value})...[/blue]")
+    write_tests(llm, config, rules, test_plan, store, project_root, settings)
     console.print("\n[bold green]Done![/bold green]")
 
 

@@ -1,6 +1,7 @@
 """Generate test code via agent mode (tool-based), run, fix loop."""
 
 
+import re
 from pathlib import Path
 
 from claude_agent_sdk import tool
@@ -43,6 +44,18 @@ def _read_source_file(target_file: str, project_root: Path) -> str:
         return content
     except (OSError, UnicodeDecodeError):
         return "(could not read file)"
+
+
+def _extract_code_from_text(text: str) -> str | None:
+    """Extract code from markdown fences when the LLM outputs code as text instead of calling write_file."""
+    if not text or not text.strip():
+        return None
+    match = re.search(r"```(?:\w+)?\s*\n(.*?)\n```", text, re.DOTALL)
+    if match:
+        code = match.group(1).strip()
+        if code:
+            return code
+    return None
 
 
 def _resolve_language(plan: TestPlan, config: ProjectConfig) -> tuple[str, str]:
@@ -114,13 +127,19 @@ def _generate_test_agentic(
         output_file=planned_test.output_file,
     )
 
-    llm.generate_with_tools(
+    text_response = llm.generate_with_tools(
         system=WRITE_TEST_SYSTEM_AGENTIC,
         prompt=prompt,
         tools=[write_file],
     )
 
     if not result["written"] or not test_path.exists():
+        code = _extract_code_from_text(text_response)
+        if code:
+            console.print("  [yellow]Warning: LLM did not use write_file tool, extracting from text[/yellow]")
+            test_path.parent.mkdir(parents=True, exist_ok=True)
+            test_path.write_text(code)
+            return code
         return None
     content = test_path.read_text()
     if not content.strip():
@@ -149,13 +168,19 @@ def _fix_test_agentic(
         output_file=planned_test.output_file,
     )
 
-    llm.generate_with_tools(
+    text_response = llm.generate_with_tools(
         system=FIX_TEST_SYSTEM_AGENTIC,
         prompt=prompt,
         tools=[write_file],
     )
 
     if not result["written"] or not test_path.exists():
+        code = _extract_code_from_text(text_response)
+        if code:
+            console.print("  [yellow]Warning: LLM did not use write_file tool, extracting from text[/yellow]")
+            test_path.parent.mkdir(parents=True, exist_ok=True)
+            test_path.write_text(code)
+            return code
         return None
     content = test_path.read_text()
     if not content.strip():
